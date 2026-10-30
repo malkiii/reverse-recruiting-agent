@@ -1,0 +1,5 @@
+interface:
+  display_name: "lean-code"
+  short_description: "Keep diffs small and code lean"
+policy:
+  allow_implicit_invocation: true
