@@ -1,0 +1,81 @@
+# Reverse Recruiting Agent
+
+A personal agent for one Admin that finds new Jobs and, once approved, emails an Application directly to the people who can hire at the Company.
+
+## Language
+
+### Finding jobs
+
+**Admin**:
+The single person who owns the agent and approves every Application.
+_Avoid_: User, candidate, applicant
+
+**Job Board**:
+A built-in, switchable source of Jobs with its own dedicated collector: LinkedIn Jobs or Glassdoor.
+_Avoid_: Source, site
+
+**Job Feed**:
+A filtered job listing URL that the Admin copies from any website and gives to the agent.
+_Avoid_: Search, Job Board, saved search
+
+**Job**:
+A unique open position found on a Job Board or Job Feed, displayed to the Admin once.
+_Avoid_: Listing, posting, vacancy
+
+**Duplicate Job**:
+A Job with the same URL as another, or the same title, Company and post day.
+_Avoid_: Repost
+
+### Applying
+
+**Company**:
+The employer behind a Job, identified by its LinkedIn page.
+_Avoid_: Employer, organization
+
+**Resume**:
+A PDF in the Admin's Resume Folder whose filename ends in "resume" or "CV" and names the role it targets, shared with recipients as a Drive link.
+_Avoid_: CV document, profile
+
+**Resume Folder**:
+The one Google Drive folder the Admin chose to hold their Resumes.
+_Avoid_: Library
+
+**Job Summary**:
+A one-paragraph summary of a Job's description, used to write the cover letter.
+_Avoid_: Digest
+
+**Decision Maker**:
+A person at a Company chosen to receive Applications, by job function priority. A Company has at most 4 in any one Application.
+_Avoid_: Contact, lead, recruiter, reach-out person
+
+**Application**:
+The outreach for one Job: the chosen Resume, the cover letter and the Decision Makers, from preparation through sending.
+_Avoid_: Outreach, campaign
+
+**Prepare**:
+The Admin's first approval, which starts building an Application without sending anything.
+_Avoid_: Apply
+
+**Review**:
+The Admin's final check of a prepared Application, ending in Send or Cancel.
+_Avoid_: Confirmation
+
+**No Contacts**:
+The outcome of an Application that ends with no Decision Maker who has an email address.
+_Avoid_: Failed
+
+**Direct Apply**:
+The outcome of an Application stopped because the Company's LinkedIn page couldn't be confirmed, advising the Admin to apply through the Job link with the chosen Resume.
+_Avoid_: Manual apply, Failed
+
+**Cover Letter**:
+The job-specific email written once per Application, then personalized with each Decision Maker's name and the Resume link.
+_Avoid_: Template, message
+
+**Cooldown**:
+The 30 days after a Decision Maker is emailed, during which they cannot be emailed again.
+_Avoid_: Blocklist
+
+**People Refresh**:
+The search for a Company's Decision Makers again, required once its saved people are 6 months old.
+_Avoid_: Re-scrape
