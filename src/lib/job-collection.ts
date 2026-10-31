@@ -1,4 +1,5 @@
 import type { JobBoardGateway, JobStore } from "./gateways";
+import { jobSchema } from "./schema";
 
 export async function runCollection({
   jobBoards,
@@ -8,6 +9,6 @@ export async function runCollection({
   jobs: JobStore;
 }) {
   for (const jobBoard of jobBoards) {
-    await jobs.save(await jobBoard.collect());
+    await jobs.save(jobSchema.array().parse(await jobBoard.collect()));
   }
 }

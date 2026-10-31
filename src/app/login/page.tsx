@@ -7,7 +7,7 @@ async function signIn(formData: FormData) {
   "use server";
 
   const password = String(formData.get("password") ?? "");
-  if (!safeEqual(password, env("DASHBOARD_PASSWORD"))) redirect("/login?error=1");
+  if (!safeEqual(password, env.DASHBOARD_PASSWORD)) redirect("/login?error=1");
 
   (await cookies()).set(SESSION_COOKIE, sessionToken(), {
     httpOnly: true,

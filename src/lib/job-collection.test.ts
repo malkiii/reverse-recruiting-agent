@@ -19,3 +19,12 @@ test("run collection saves the Jobs found on a Job Board", async () => {
 
   expect(await jobs.list()).toEqual([job]);
 });
+
+test("run collection rejects a malformed Job and saves nothing", async () => {
+  const jobs = new FakeJobStore();
+  const malformed = { ...job, title: null } as unknown as typeof job;
+
+  await expect(runCollection({ jobBoards: [new FakeJobBoard([malformed])], jobs })).rejects.toThrow();
+
+  expect(await jobs.list()).toEqual([]);
+});

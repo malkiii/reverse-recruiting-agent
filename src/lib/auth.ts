@@ -10,5 +10,5 @@ export function safeEqual(a: string, b: string) {
 }
 
 export function sessionToken() {
-  return createHmac("sha256", env("DASHBOARD_PASSWORD")).update("admin-session").digest("hex");
+  return createHmac("sha256", env.DASHBOARD_PASSWORD).update("admin-session").digest("hex");
 }

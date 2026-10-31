@@ -1,9 +1,9 @@
 import { connection } from "next/server";
-import { supabaseJobStore } from "@/lib/supabase";
+import { drizzleJobStore } from "@/lib/drizzle";
 
 export default async function JobsPage() {
   await connection();
-  const jobs = await supabaseJobStore().list();
+  const jobs = await drizzleJobStore().list();
 
   return (
     <main>

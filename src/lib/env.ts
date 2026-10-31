@@ -1,5 +1,11 @@
-export function env(name: string) {
-  const value = process.env[name];
-  if (!value) throw new Error(`Missing environment variable ${name}`);
-  return value;
-}
+import { createEnv } from "@t3-oss/env-nextjs";
+import { z } from "zod";
+
+export const env = createEnv({
+  server: {
+    DASHBOARD_PASSWORD: z.string().min(1),
+    CRON_SECRET: z.string().min(1),
+    DATABASE_URL: z.url(),
+  },
+  experimental__runtimeEnv: {},
+});
