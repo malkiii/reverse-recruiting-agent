@@ -16,6 +16,9 @@ A personal agent for one Admin. See `GLOSSARY.md` and `docs/adr/`.
 | `DASHBOARD_PASSWORD` | Password for signing in to the dashboard |
 | `CRON_SECRET` | Bearer token for `POST /api/collection` |
 | `DATABASE_URL` | Supabase transaction pooler connection string (port 6543), server-side only |
+| `APP_URL` | Public URL of this app, used for Apify webhooks |
+| `APIFY_TOKENS` | Comma-separated Apify API tokens |
+| `APIFY_WEBHOOK_SECRET` | Shared secret that authenticates Apify webhooks |
 
 Changing `DASHBOARD_PASSWORD` signs out every session.
 

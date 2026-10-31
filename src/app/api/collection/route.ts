@@ -1,7 +1,7 @@
 import { safeEqual } from "@/lib/auth";
+import { collectionServices } from "@/lib/collection";
 import { env } from "@/lib/env";
 import { runCollection } from "@/lib/job-collection";
-import { drizzleJobStore } from "@/lib/drizzle";
 
 export async function POST(request: Request) {
   const authorization = request.headers.get("authorization") ?? "";
@@ -9,6 +9,6 @@ export async function POST(request: Request) {
     return new Response("Unauthorized", { status: 401 });
   }
 
-  await runCollection({ jobBoards: [], jobs: drizzleJobStore() });
+  await runCollection(collectionServices());
   return new Response(null, { status: 204 });
 }
