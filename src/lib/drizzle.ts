@@ -19,7 +19,8 @@ const JOBS_SHOWN = 200;
 let db: PostgresJsDatabase | undefined;
 
 function client(databaseUrl: string) {
-  db ??= drizzle(postgres(databaseUrl, { prepare: false, max: 1 }));
+  // Pipelined queries hang forever through the Supabase transaction pooler.
+  db ??= drizzle(postgres(databaseUrl, { prepare: false, max: 1, max_pipeline: 1 }));
   return db;
 }
 
