@@ -3,5 +3,7 @@ node_modules/
 .vercel/
 next-env.d.ts
 *.tsbuildinfo
+__pycache__/
 .env*
 !.env.example
+modal.env
