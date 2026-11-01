@@ -1,0 +1,44 @@
+name: Deploy
+
+on:
+  push:
+    branches: [master]
+
+# Deploys never overlap and are never cancelled halfway.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - run: npm ci
+
+      # A failed migration fails the job, so the Modal deploy below never runs.
+      - name: Apply migrations
+        run: npm run db:migrate
+        env:
+          DATABASE_URL: ${{ secrets.DIRECT_DATABASE_URL }}
+
+      - run: pip install modal==1.5.4
+
+      - name: Deploy Functions
+        run: modal deploy modal_app.py
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}

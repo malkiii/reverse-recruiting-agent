@@ -17,7 +17,13 @@ Copy `.env.example` to `.env.local`. The dashboard and Functions each validate o
 
 Generate `FUNCTIONS_SECRET` with `openssl rand -hex 32`.
 
-Dev and production share one Supabase project, so migrations must be backward-compatible. Apply them with `npm run db:migrate`.
+## Migrations
+
+Dev and production share one Supabase project, so a migration reaches production as soon as it's applied from dev. Migrations must be backward-compatible: the version already running has to keep working against the new schema.
+
+A destructive change, such as dropping or renaming a column, takes two releases. The first stops using the old shape, and the second removes it.
+
+Apply a migration from dev with `npm run db:migrate` before pushing code that needs it. Every push to `master` also applies pending migrations, but Vercel doesn't wait for them, and a failed migration stops only the Modal deploy.
 
 ## Development
 
@@ -31,18 +37,31 @@ Run the checks with `npm test` and `npm run typecheck`.
 
 ## Production
 
-Create the Modal Secret, with `modal.env` holding only `DATABASE_URL` and `FUNCTIONS_SECRET`:
+A push to `master` runs `.github/workflows/deploy.yml`, which applies migrations over the direct connection and then runs `modal deploy`. A failed migration stops the Modal deploy. Vercel deploys the dashboard on the same push.
+
+### Secrets
+
+| Where | Secret | Purpose |
+| --- | --- | --- |
+| Modal | `DATABASE_URL`, `FUNCTIONS_SECRET` | Runtime variables for Functions |
+| Vercel | `DATABASE_URL`, `FUNCTIONS_SECRET`, `DASHBOARD_PASSWORD`, `FUNCTIONS_BASE_URL` | Runtime variables for the dashboard |
+| GitHub Actions | `DIRECT_DATABASE_URL` | Direct database connection for migrations |
+| GitHub Actions | `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET` | Modal token for `modal deploy` |
+
+GitHub-hosted runners have no IPv6, and Supabase's direct host is IPv6-only without its IPv4 add-on. Without the add-on, set `DIRECT_DATABASE_URL` to the session pooler connection, port 5432.
+
+Create the Modal Secret, with `modal.env` holding only its two variables:
 
 ```sh
 modal secret create reverse-recruiting-agent --from-dotenv modal.env
 ```
 
-Deploy the Functions:
+Set `FUNCTIONS_BASE_URL` in Vercel to the web endpoint URL that `modal deploy` prints.
+
+### Deploying by hand
 
 ```sh
 modal deploy modal_app.py
 ```
 
 On Windows, set `PYTHONUTF8=1` first, or the Modal CLI can fail while printing build logs.
-
-Set the four variables above in Vercel, with `FUNCTIONS_BASE_URL` as the web endpoint URL that `modal deploy` prints.
