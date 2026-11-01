@@ -13,6 +13,9 @@ Copy `.env.example` to `.env.local`. The dashboard and Functions each validate o
 | `DATABASE_URL`       | Dashboard, Functions | Supabase transaction pooler connection, port 6543 |
 | `FUNCTIONS_SECRET`   | Dashboard, Functions | Bearer secret that protects Function routes     |
 | `APIFY_TOKENS`       | Functions            | Comma-separated Apify tokens, used round-robin  |
+| `TELEGRAM_BOT_TOKEN` | Functions            | Telegram bot that sends Failure Alerts          |
+| `TELEGRAM_CHAT_ID`   | Functions            | The Admin's Telegram chat                       |
+| `DASHBOARD_URL`      | Functions            | Public dashboard URL, linked from Failure Alerts |
 | `DASHBOARD_PASSWORD` | Dashboard            | Password for signing in                         |
 | `FUNCTIONS_BASE_URL` | Dashboard            | Modal web endpoint, or the local worker         |
 
@@ -44,14 +47,14 @@ A push to `master` runs `.github/workflows/deploy.yml`, which applies migrations
 
 | Where | Secret | Purpose |
 | --- | --- | --- |
-| Modal | `DATABASE_URL`, `FUNCTIONS_SECRET`, `APIFY_TOKENS` | Runtime variables for Functions |
+| Modal | `DATABASE_URL`, `FUNCTIONS_SECRET`, `APIFY_TOKENS`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `DASHBOARD_URL` | Runtime variables for Functions |
 | Vercel | `DATABASE_URL`, `FUNCTIONS_SECRET`, `DASHBOARD_PASSWORD`, `FUNCTIONS_BASE_URL` | Runtime variables for the dashboard |
 | GitHub Actions | `DIRECT_DATABASE_URL` | Direct database connection for migrations |
 | GitHub Actions | `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET` | Modal token for `modal deploy` |
 
 GitHub-hosted runners have no IPv6, and Supabase's direct host is IPv6-only without its IPv4 add-on. Without the add-on, set `DIRECT_DATABASE_URL` to the session pooler connection, port 5432.
 
-Create the Modal Secret, with `modal.env` holding only its three variables:
+Create the Modal Secret, with `modal.env` holding only its six variables:
 
 ```sh
 modal secret create reverse-recruiting-agent --from-dotenv modal.env

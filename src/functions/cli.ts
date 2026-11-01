@@ -27,10 +27,10 @@ async function main() {
     );
     console.log(JSON.stringify(result));
   } else if (command === "run") {
-    await runFunction(Number(runId), work, services);
+    await runFunction(Number(runId), functionName, work, services);
   } else if (command === "scheduled") {
     const claimed = await services.runs.start(functionName, services.now(), timeLimitMs);
-    if (claimed !== null) await runFunction(claimed, work, services);
+    if (claimed !== null) await runFunction(claimed, functionName, work, services);
   } else {
     throw new Error(`Unknown command: ${command}`);
   }

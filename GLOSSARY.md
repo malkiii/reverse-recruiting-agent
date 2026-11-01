@@ -34,6 +34,10 @@ _Avoid_: Scrape, sync
 The chat message telling the Admin about one new Job, linking to its original page. It carries no approval.
 _Avoid_: Notification, Prepare prompt
 
+**Failure Alert**:
+The short chat message telling the Admin that a Function failed, linking to the dashboard. A Function killed by Modal can't send one.
+_Avoid_: Notification, Job Alert
+
 ### Applying
 
 **Company**:

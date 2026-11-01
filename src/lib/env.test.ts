@@ -6,7 +6,13 @@ const sharedVariables = {
   FUNCTIONS_SECRET: "secret",
 };
 
-const functionsVariables = { ...sharedVariables, APIFY_TOKENS: "first,second" };
+const functionsVariables = {
+  ...sharedVariables,
+  APIFY_TOKENS: "first,second",
+  TELEGRAM_BOT_TOKEN: "bot-token",
+  TELEGRAM_CHAT_ID: "12345",
+  DASHBOARD_URL: "https://dashboard.example.com",
+};
 
 const dashboardVariables = {
   ...sharedVariables,
@@ -16,6 +22,16 @@ const dashboardVariables = {
 
 test("Functions need only their own variables", () => {
   expect(parseFunctionsEnv(functionsVariables)).toEqual(functionsVariables);
+});
+
+test("Functions need Telegram settings and the dashboard URL for Failure Alerts", () => {
+  const { TELEGRAM_BOT_TOKEN, ...withoutBotToken } = functionsVariables;
+  const { TELEGRAM_CHAT_ID, ...withoutChatId } = functionsVariables;
+  const { DASHBOARD_URL, ...withoutDashboardUrl } = functionsVariables;
+
+  expect(() => parseFunctionsEnv(withoutBotToken)).toThrow(/TELEGRAM_BOT_TOKEN/);
+  expect(() => parseFunctionsEnv(withoutChatId)).toThrow(/TELEGRAM_CHAT_ID/);
+  expect(() => parseFunctionsEnv(withoutDashboardUrl)).toThrow(/DASHBOARD_URL/);
 });
 
 test("the dashboard needs its password and the Functions base URL", () => {

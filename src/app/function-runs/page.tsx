@@ -3,6 +3,7 @@ import Link from "next/link";
 import { connection } from "next/server";
 import { drizzleFunctionRunStore } from "@/lib/drizzle";
 import { parseDashboardEnv } from "@/lib/env";
+import { runAsOf } from "@/lib/function-runs";
 
 async function startNoop() {
   "use server";
@@ -19,7 +20,8 @@ async function startNoop() {
 export default async function FunctionRunsPage() {
   await connection();
   const { DATABASE_URL } = parseDashboardEnv(process.env);
-  const runs = await drizzleFunctionRunStore(DATABASE_URL).list();
+  const now = new Date();
+  const runs = (await drizzleFunctionRunStore(DATABASE_URL).list()).map((run) => runAsOf(run, now));
 
   return (
     <main>

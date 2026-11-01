@@ -13,6 +13,10 @@ export interface FunctionRunStore {
   list(): Promise<FunctionRun[]>;
 }
 
+export interface TelegramGateway {
+  send(text: string): Promise<void>;
+}
+
 export type Job = Omit<typeof jobs.$inferSelect, "id">;
 export type JobBoardSettings = typeof jobBoardSettings.$inferSelect;
 export type ActorRun = Omit<typeof actorRuns.$inferSelect, "resultsSavedAt">;

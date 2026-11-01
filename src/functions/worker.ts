@@ -20,7 +20,8 @@ const server = createServer(async (request, response) => {
       { functionName, timeLimitMs: definition.timeLimitMs, authorization: request.headers.authorization },
       {
         ...services,
-        start: (runId) => runFunction(runId, () => definition.work(services), services).catch(console.error),
+        start: (runId) =>
+          runFunction(runId, functionName, () => definition.work(services), services).catch(console.error),
       },
     );
     response.writeHead(result.status, { "content-type": "application/json" }).end(JSON.stringify(result));

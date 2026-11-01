@@ -10,6 +10,7 @@ import type {
   JobBoardSettings,
   JobBoardSettingsStore,
   JobStore,
+  TelegramGateway,
 } from "./gateways";
 import { COLLECT_JOBS, type JobSearch } from "./schema";
 
@@ -38,6 +39,16 @@ export class FakeFunctionRunStore implements FunctionRunStore {
 
   async list() {
     return this.runs;
+  }
+}
+
+export class FakeTelegram implements TelegramGateway {
+  sent: string[] = [];
+  failing = false;
+
+  async send(text: string) {
+    if (this.failing) throw new Error("Telegram is down");
+    this.sent.push(text);
   }
 }
 
