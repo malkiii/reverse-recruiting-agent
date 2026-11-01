@@ -26,6 +26,14 @@ _Avoid_: Listing, posting, vacancy
 A Job with the same URL as another, or the same title, Company and post day.
 _Avoid_: Repost
 
+**Job Collection**:
+The daily gathering of new Jobs from every enabled Job Board and Job Feed.
+_Avoid_: Scrape, sync
+
+**Job Alert**:
+The chat message telling the Admin about one new Job, linking to its original page. It carries no approval.
+_Avoid_: Notification, Prepare prompt
+
 ### Applying
 
 **Company**:
@@ -57,8 +65,16 @@ The Admin's first approval, which starts building an Application without sending
 _Avoid_: Apply
 
 **Review**:
-The Admin's final check of a prepared Application, ending in Send or Cancel.
+The Admin's final check of a prepared Application, where they can edit it, ending in Send or Cancel.
 _Avoid_: Confirmation
+
+**Send**:
+The Admin's second approval, which emails a reviewed Application to its Decision Makers.
+_Avoid_: Submit
+
+**Cancel**:
+The Admin's final decision at Review not to send an Application. A cancelled Job cannot be Prepared again.
+_Avoid_: Reject, delete
 
 **No Contacts**:
 The outcome of an Application that ends with no Decision Maker who has an email address.
