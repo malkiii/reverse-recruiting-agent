@@ -1,4 +1,5 @@
 import { revalidatePath } from "next/cache";
+import Link from "next/link";
 import { connection } from "next/server";
 import { drizzleFunctionRunStore } from "@/lib/drizzle";
 import { parseDashboardEnv } from "@/lib/env";
@@ -24,6 +25,7 @@ export default async function FunctionRunsPage() {
     <main>
       {runs.some(({ status }) => status === "running") && <meta httpEquiv="refresh" content="3" />}
       <h1>Function runs</h1>
+      <Link href="/jobs">Jobs</Link>
       <form action={startNoop}>
         <button type="submit">Run no-op</button>
       </form>

@@ -9,16 +9,19 @@ const services = functionServices();
 
 const server = createServer(async (request, response) => {
   const functionName = request.url?.match(/^\/functions\/([\w-]+)$/)?.[1];
-  const work = functionName ? functions.get(functionName) : undefined;
-  if (request.method !== "POST" || !functionName || !work) {
+  const definition = functionName ? functions.get(functionName) : undefined;
+  if (request.method !== "POST" || !functionName || !definition) {
     response.writeHead(404).end();
     return;
   }
 
   try {
     const result = await acceptFunctionRequest(
-      { functionName, authorization: request.headers.authorization },
-      { ...services, start: (runId) => runFunction(runId, work, services).catch(console.error) },
+      { functionName, timeLimitMs: definition.timeLimitMs, authorization: request.headers.authorization },
+      {
+        ...services,
+        start: (runId) => runFunction(runId, () => definition.work(services), services).catch(console.error),
+      },
     );
     response.writeHead(result.status, { "content-type": "application/json" }).end(JSON.stringify(result));
   } catch (error) {

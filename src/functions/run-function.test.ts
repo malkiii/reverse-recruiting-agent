@@ -7,8 +7,8 @@ const finishedAt = new Date("2026-11-01T12:00:05Z");
 
 async function setup() {
   const runs = new FakeFunctionRunStore();
-  const runId = await runs.start("noop", startedAt);
-  return { runs, runId, now: () => finishedAt };
+  const runId = await runs.start("noop", startedAt, 60_000);
+  return { runs, runId: runId!, now: () => finishedAt };
 }
 
 test("a finished Function is recorded as succeeded with its finish time", async () => {

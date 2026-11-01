@@ -9,7 +9,7 @@ function setup(start: (runId: number) => void = () => {}) {
 test("a missing bearer secret is rejected and nothing runs", async () => {
   const deps = setup(() => expect.unreachable());
 
-  const response = await acceptFunctionRequest({ functionName: "noop", authorization: undefined }, deps);
+  const response = await acceptFunctionRequest({ functionName: "noop", timeLimitMs: 60_000, authorization: undefined }, deps);
 
   expect(response).toEqual({ status: 401 });
   expect(await deps.runs.list()).toEqual([]);
@@ -18,7 +18,7 @@ test("a missing bearer secret is rejected and nothing runs", async () => {
 test("a wrong bearer secret is rejected and nothing runs", async () => {
   const deps = setup(() => expect.unreachable());
 
-  const response = await acceptFunctionRequest({ functionName: "noop", authorization: "Bearer wrong" }, deps);
+  const response = await acceptFunctionRequest({ functionName: "noop", timeLimitMs: 60_000, authorization: "Bearer wrong" }, deps);
 
   expect(response).toEqual({ status: 401 });
   expect(await deps.runs.list()).toEqual([]);
@@ -28,7 +28,7 @@ test("the right bearer secret records a running Function run and starts it", asy
   const started: number[] = [];
   const deps = setup((runId) => started.push(runId));
 
-  const response = await acceptFunctionRequest({ functionName: "noop", authorization: "Bearer secret" }, deps);
+  const response = await acceptFunctionRequest({ functionName: "noop", timeLimitMs: 60_000, authorization: "Bearer secret" }, deps);
 
   expect(response).toEqual({ status: 202, runId: 1 });
   expect(started).toEqual([1]);
@@ -41,7 +41,7 @@ test("the request returns without waiting for the Function to finish", async () 
   const neverFinishes = new Promise<void>(() => {});
   const deps = setup(() => neverFinishes);
 
-  const response = await acceptFunctionRequest({ functionName: "noop", authorization: "Bearer secret" }, deps);
+  const response = await acceptFunctionRequest({ functionName: "noop", timeLimitMs: 60_000, authorization: "Bearer secret" }, deps);
 
   expect(response.status).toBe(202);
 });

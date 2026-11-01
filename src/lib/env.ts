@@ -2,12 +2,16 @@ import { z } from "zod";
 
 type Variables = Record<string, string | undefined>;
 
-const functionsSchema = z.object({
+const sharedSchema = z.object({
   DATABASE_URL: z.url(),
   FUNCTIONS_SECRET: z.string().min(1),
 });
 
-const dashboardSchema = functionsSchema.extend({
+const functionsSchema = sharedSchema.extend({
+  APIFY_TOKENS: z.string().min(1),
+});
+
+const dashboardSchema = sharedSchema.extend({
   DASHBOARD_PASSWORD: z.string().min(1),
   FUNCTIONS_BASE_URL: z.url(),
 });
