@@ -1,4 +1,4 @@
-Always be very concise when you answer.
+Always give short and concise answers.
 
 <!-- CODEGRAPH_START -->
 
