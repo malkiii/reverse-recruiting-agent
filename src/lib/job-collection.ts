@@ -11,7 +11,7 @@ import { COLLECT_JOBS, type JobSearch } from "./schema";
 
 export const COLLECTION_TIME_LIMIT_MS = 30 * 60_000;
 
-const JOBS_PER_COLLECTION = 50;
+const JOBS_PER_COLLECTION = 20;
 const POLL_DELAY_MS = 15_000;
 // Stops well inside the time limit. Whatever is still going is picked up by the next Job Collection.
 const MAX_POLLS = 80;
@@ -78,7 +78,7 @@ export async function runCollection(deps: CollectionDeps) {
   const unfinished = await deps.actorRuns.listUnfinished();
   const runs = [...unfinished, ...(await startActorRuns(deps, unfinished, errors))];
 
-  // Counted per Job Board and day: a run left from an earlier day has its own 50.
+  // Counted per Job Board and day: a run left from an earlier day has its own 20.
   const savedPerBoardDay = new Map<string, number>();
   let pollsLeft = MAX_POLLS;
 

@@ -103,7 +103,7 @@ export class FakeActorRunStore implements ActorRunStore {
 /** Each run reports the statuses queued here in turn, stays on the last, and returns the Jobs given. */
 export class FakeJobBoard implements JobBoardGateway {
   source = "LinkedIn";
-  actor = "valig/linkedin-jobs-scraper";
+  actor = "worldunboxer/rapid-linkedin-scraper";
   started: { runId: string; search: JobSearch; limit: number; token: string }[] = [];
   statuses: ActorRunStatus[] = ["succeeded"];
   private polls = new Map<string, number>();

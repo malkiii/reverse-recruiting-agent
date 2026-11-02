@@ -78,7 +78,7 @@ test("a Job with an already-saved URL is a Duplicate Job", async () => {
   expect(await deps.jobs.list()).toEqual([job]);
 });
 
-test("searches share the limit and a Job Collection saves at most 50 Jobs", async () => {
+test("searches share the limit and a Job Collection saves at most 20 Jobs", async () => {
   const searches = ["a", "b", "c"].map((keywords) => ({ keywords, location: "Remote" }));
   const { board, deps } = setup({ searches });
   board.results = async ({ runId }) =>
@@ -86,8 +86,8 @@ test("searches share the limit and a Job Collection saves at most 50 Jobs", asyn
 
   await runCollection(deps);
 
-  expect(board.started.map(({ limit }) => limit)).toEqual([17, 17, 16]);
-  expect(await deps.jobs.list()).toHaveLength(50);
+  expect(board.started.map(({ limit }) => limit)).toEqual([7, 7, 6]);
+  expect(await deps.jobs.list()).toHaveLength(20);
 });
 
 test("an actor run is polled with a delay until it finishes", async () => {
@@ -251,13 +251,13 @@ test("a large actor run left from an earlier day doesn't use up today's cap", as
 
   await runCollection(deps);
 
-  expect(await deps.jobs.list()).toHaveLength(100);
+  expect(await deps.jobs.list()).toHaveLength(40);
 });
 
 test("Jobs that were already saved don't count towards the cap", async () => {
   const searches = ["a", "b"].map((keywords) => ({ keywords, location: "Remote" }));
   const { board, deps } = setup({ searches });
-  const alreadySaved = Array.from({ length: 50 }, (_, index) => ({ ...job, url: `https://example.com/old/${index}` }));
+  const alreadySaved = Array.from({ length: 20 }, (_, index) => ({ ...job, url: `https://example.com/old/${index}` }));
   await deps.jobs.save(alreadySaved);
   await deps.actorRuns.save({
     runId: "left-over",
@@ -280,5 +280,5 @@ test("Jobs that were already saved don't count towards the cap", async () => {
 
   await runCollection(deps);
 
-  expect(await deps.jobs.list()).toHaveLength(75);
+  expect(await deps.jobs.list()).toHaveLength(40);
 });

@@ -3,20 +3,22 @@ import type { ActorRun, ActorRunStatus, JobBoardGateway } from "./gateways";
 import type { JobSearch } from "./schema";
 
 const API_URL = "https://api.apify.com/v2";
-const ACTOR = "valig/linkedin-jobs-scraper";
+const ACTOR = "worldunboxer/rapid-linkedin-scraper";
 const SOURCE = "LinkedIn";
-const PAST_24_HOURS = "r86400";
+const PAST_24_HOURS = "Past 24 hours";
+// The actor rejects smaller runs. Job Collection still saves at most its cap.
+const MIN_JOBS_PER_RUN = 10;
 
 const STILL_RUNNING = ["READY", "RUNNING", "TIMING-OUT", "ABORTING"];
 
 const itemSchema = z.object({
-  url: z.string(),
-  title: z.string(),
-  companyName: z.string(),
+  job_url: z.string(),
+  job_title: z.string(),
+  company_name: z.string(),
   location: z.string().nullish(),
-  postedDate: z.string(),
-  description: z.string().nullish(),
-  companyUrl: z.string().nullish(),
+  posted_date: z.string(),
+  job_description: z.string().nullish(),
+  company_url: z.string().nullish(),
 });
 
 async function apify<T>(path: string, token: string, init?: RequestInit): Promise<T> {
@@ -35,7 +37,12 @@ export const linkedInJobBoard: JobBoardGateway = {
   async start({ keywords, location }: JobSearch, limit: number, token: string) {
     const { data } = await apify<{ data: { id: string } }>(`/acts/${ACTOR.replace("/", "~")}/runs`, token, {
       method: "POST",
-      body: JSON.stringify({ keywords, location, datePosted: PAST_24_HOURS, limit }),
+      body: JSON.stringify({
+        jobs_titles: [keywords],
+        location,
+        posted_within: PAST_24_HOURS,
+        jobs_entries: Math.max(limit, MIN_JOBS_PER_RUN),
+      }),
     });
     return data.id;
   },
@@ -55,16 +62,16 @@ export const linkedInJobBoard: JobBoardGateway = {
         console.warn(`Skipped a malformed Job from actor run ${runId}`);
         return [];
       }
-      const { url, title, companyName, location, postedDate, description, companyUrl } = parsed.data;
+      const { job_url, job_title, company_name, location, posted_date, job_description, company_url } = parsed.data;
       return {
         source: SOURCE,
-        title,
-        companyName,
+        title: job_title,
+        companyName: company_name,
         location: location ?? "",
-        url: url.split("?")[0],
-        postDay: postedDate.slice(0, 10),
-        description: description ?? null,
-        companyLinkedinUrl: companyUrl ?? null,
+        url: job_url.split("?")[0],
+        postDay: posted_date.slice(0, 10),
+        description: job_description ?? null,
+        companyLinkedinUrl: company_url ?? null,
       };
     });
   },
