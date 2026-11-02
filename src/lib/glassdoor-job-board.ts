@@ -1,3 +1,4 @@
+import { NodeHtmlMarkdown } from "node-html-markdown";
 import { z } from "zod";
 import { actorRunJobs, actorRunStatus, startActorRun } from "./apify-actor";
 import type { ActorRun, JobBoardGateway } from "./gateways";
@@ -36,7 +37,8 @@ export const glassdoorJobBoard: JobBoardGateway = {
       // The query is the Job's ID (?jl=), so it stays.
       url,
       ageInDays,
-      description: description ?? null,
+      // Glassdoor gives the description as HTML.
+      description: description ? NodeHtmlMarkdown.translate(description) : null,
       companyLinkedinUrl: null,
     }));
   },
