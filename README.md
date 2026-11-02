@@ -1,4 +1,4 @@
-# Reverse Recruiting Agent
+# Reverse Recruiting Assistant
 
 A personal agent for one Admin that finds new Jobs and, once approved, emails an Application directly to the people who can hire at the Company.
 
@@ -8,16 +8,16 @@ See `GLOSSARY.md` for the language and `docs/adr/` for the decisions, starting w
 
 Copy `.env.example` to `.env.local`. The dashboard and Functions each validate only their own variables, in `src/lib/env.ts`.
 
-| Variable             | Used by              | Purpose                                         |
-| -------------------- | -------------------- | ----------------------------------------------- |
+| Variable             | Used by              | Purpose                                           |
+| -------------------- | -------------------- | ------------------------------------------------- |
 | `DATABASE_URL`       | Dashboard, Functions | Supabase transaction pooler connection, port 6543 |
-| `FUNCTIONS_SECRET`   | Dashboard, Functions | Bearer secret that protects Function routes     |
-| `APIFY_TOKENS`       | Functions            | Comma-separated Apify tokens, used round-robin  |
-| `TELEGRAM_BOT_TOKEN` | Functions            | Telegram bot that sends Failure Alerts          |
-| `TELEGRAM_CHAT_ID`   | Functions            | The Admin's Telegram chat                       |
-| `DASHBOARD_URL`      | Functions            | Public dashboard URL, linked from Failure Alerts |
-| `DASHBOARD_PASSWORD` | Dashboard            | Password for signing in                         |
-| `FUNCTIONS_BASE_URL` | Dashboard            | Modal web endpoint, or the local worker         |
+| `FUNCTIONS_SECRET`   | Dashboard, Functions | Bearer secret that protects Function routes       |
+| `APIFY_TOKENS`       | Functions            | Comma-separated Apify tokens, used round-robin    |
+| `TELEGRAM_BOT_TOKEN` | Functions            | Telegram bot that sends Failure Alerts            |
+| `TELEGRAM_CHAT_ID`   | Functions            | The Admin's Telegram chat                         |
+| `DASHBOARD_URL`      | Functions            | Public dashboard URL, linked from Failure Alerts  |
+| `DASHBOARD_PASSWORD` | Dashboard            | Password for signing in                           |
+| `FUNCTIONS_BASE_URL` | Dashboard            | Modal web endpoint, or the local worker           |
 
 Generate `FUNCTIONS_SECRET` with `openssl rand -hex 32`.
 
@@ -45,12 +45,12 @@ A push to `master` runs `.github/workflows/deploy.yml`, which applies migrations
 
 ### Secrets
 
-| Where | Secret | Purpose |
-| --- | --- | --- |
-| Modal | `DATABASE_URL`, `FUNCTIONS_SECRET`, `APIFY_TOKENS`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `DASHBOARD_URL` | Runtime variables for Functions |
-| Vercel | `DATABASE_URL`, `FUNCTIONS_SECRET`, `DASHBOARD_PASSWORD`, `FUNCTIONS_BASE_URL` | Runtime variables for the dashboard |
-| GitHub Actions | `DIRECT_DATABASE_URL` | Direct database connection for migrations |
-| GitHub Actions | `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET` | Modal token for `modal deploy` |
+| Where          | Secret                                                                                                        | Purpose                                   |
+| -------------- | ------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| Modal          | `DATABASE_URL`, `FUNCTIONS_SECRET`, `APIFY_TOKENS`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `DASHBOARD_URL` | Runtime variables for Functions           |
+| Vercel         | `DATABASE_URL`, `FUNCTIONS_SECRET`, `DASHBOARD_PASSWORD`, `FUNCTIONS_BASE_URL`                                | Runtime variables for the dashboard       |
+| GitHub Actions | `DIRECT_DATABASE_URL`                                                                                         | Direct database connection for migrations |
+| GitHub Actions | `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET`                                                                        | Modal token for `modal deploy`            |
 
 GitHub-hosted runners have no IPv6, and Supabase's direct host is IPv6-only without its IPv4 add-on. Without the add-on, set `DIRECT_DATABASE_URL` to the session pooler connection, port 5432.
 

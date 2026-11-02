@@ -1,4 +1,4 @@
-# Reverse Recruiting Agent
+# Reverse Recruiting Assistant
 
 A personal agent for one Admin that finds new Jobs and, once approved, emails an Application directly to the people who can hire at the Company.
 

@@ -1,5 +1,5 @@
 {
-  "name": "reverse-recruiting-agent",
+  "name": "reverse-recruiting-assistant",
   "private": true,
   "scripts": {
     "dev": "next dev",

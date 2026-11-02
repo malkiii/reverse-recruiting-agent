@@ -17,7 +17,7 @@ If there is no `.codegraph/` directory, skip CodeGraph entirely — indexing is 
 
 ### Issue tracker
 
-Issues live in GitHub Issues (malkiii/reverse-recruiting-agent), via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+Issues live in GitHub Issues (malkiii/reverse-recruiting-assistant), via the `gh` CLI. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
