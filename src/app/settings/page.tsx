@@ -1,17 +1,27 @@
 import { revalidatePath } from "next/cache";
 import Link from "next/link";
 import { connection } from "next/server";
-import { drizzleJobBoardSettingsStore } from "@/lib/drizzle";
+import { drizzleJobBoardSettingsStore, drizzleJobFeedStore } from "@/lib/drizzle";
 import { parseDashboardEnv } from "@/lib/env";
+import { glassdoorJobBoard } from "@/lib/glassdoor-job-board";
 import { linkedInJobBoard } from "@/lib/linkedin-job-board";
 import type { JobSearch } from "@/lib/schema";
 
-const { source } = linkedInJobBoard;
 const SEPARATOR = "|";
+
+function databaseUrl() {
+  return parseDashboardEnv(process.env).DATABASE_URL;
+}
 
 function parseSearch(line: string): JobSearch {
   const [keywords = "", location = ""] = line.split(SEPARATOR).map((part) => part.trim());
   return { keywords, location };
+}
+
+function feedUrl(formData: FormData) {
+  const url = String(formData.get("url")).trim();
+  if (!URL.canParse(url)) throw new Error(`Not a URL: ${url}`);
+  return url;
 }
 
 async function saveLinkedIn(formData: FormData) {
@@ -22,30 +32,65 @@ async function saveLinkedIn(formData: FormData) {
     .filter((line) => line.trim())
     .map(parseSearch);
 
-  const { DATABASE_URL } = parseDashboardEnv(process.env);
-  await drizzleJobBoardSettingsStore(DATABASE_URL).save({
-    source,
+  await drizzleJobBoardSettingsStore(databaseUrl()).save({
+    source: linkedInJobBoard.source,
     enabled: formData.get("enabled") === "on",
     searches,
   });
   revalidatePath("/settings");
 }
 
+async function saveGlassdoor(formData: FormData) {
+  "use server";
+
+  const keywords = String(formData.get("keywords")).trim();
+  const location = String(formData.get("location")).trim();
+  await drizzleJobBoardSettingsStore(databaseUrl()).save({
+    source: glassdoorJobBoard.source,
+    enabled: formData.get("enabled") === "on",
+    searches: keywords ? [{ keywords, location }] : [],
+  });
+  revalidatePath("/settings");
+}
+
+async function addJobFeed(formData: FormData) {
+  "use server";
+
+  await drizzleJobFeedStore(databaseUrl()).add(feedUrl(formData));
+  revalidatePath("/settings");
+}
+
+async function saveJobFeed(formData: FormData) {
+  "use server";
+
+  const id = Number(formData.get("id"));
+  const store = drizzleJobFeedStore(databaseUrl());
+  if (formData.get("remove")) await store.remove(id);
+  else await store.update({ id, url: feedUrl(formData), enabled: formData.get("enabled") === "on" });
+  revalidatePath("/settings");
+}
+
 export default async function SettingsPage() {
   await connection();
-  const { DATABASE_URL } = parseDashboardEnv(process.env);
-  const settings = await drizzleJobBoardSettingsStore(DATABASE_URL).get(source);
-  const searches = settings?.searches.map(({ keywords, location }) => `${keywords} ${SEPARATOR} ${location}`);
+  const settingsStore = drizzleJobBoardSettingsStore(databaseUrl());
+  const [linkedIn, glassdoor, feeds] = await Promise.all([
+    settingsStore.get(linkedInJobBoard.source),
+    settingsStore.get(glassdoorJobBoard.source),
+    drizzleJobFeedStore(databaseUrl()).list(),
+  ]);
+  const linkedInSearches = linkedIn?.searches.map(({ keywords, location }) => `${keywords} ${SEPARATOR} ${location}`);
+  const glassdoorSearch = glassdoor?.searches[0];
 
   return (
     <main>
       <h1>Settings</h1>
       <Link href="/jobs">Jobs</Link>
+
       <h2>LinkedIn Job Board</h2>
       <form action={saveLinkedIn}>
         <p>
           <label>
-            <input type="checkbox" name="enabled" defaultChecked={settings?.enabled} /> Enabled
+            <input type="checkbox" name="enabled" defaultChecked={linkedIn?.enabled} /> Enabled
           </label>
         </p>
         <p>
@@ -57,11 +102,49 @@ export default async function SettingsPage() {
               rows={5}
               cols={50}
               placeholder={`software engineer ${SEPARATOR} Remote`}
-              defaultValue={searches?.join("\n")}
+              defaultValue={linkedInSearches?.join("\n")}
             />
           </label>
         </p>
         <button type="submit">Save</button>
+      </form>
+
+      <h2>Glassdoor Job Board</h2>
+      <form action={saveGlassdoor}>
+        <p>
+          <label>
+            <input type="checkbox" name="enabled" defaultChecked={glassdoor?.enabled} /> Enabled
+          </label>
+        </p>
+        <p>
+          <label>
+            Keywords <input name="keywords" placeholder="software engineer" defaultValue={glassdoorSearch?.keywords} />
+          </label>{" "}
+          <label>
+            Location <input name="location" placeholder="New York" defaultValue={glassdoorSearch?.location} />
+          </label>
+        </p>
+        <button type="submit">Save</button>
+      </form>
+
+      <h2>Job Feeds</h2>
+      <p>Filtered job listing URLs from any website. Each enabled Job Feed costs one Firecrawl request a day.</p>
+      {feeds.map((feed) => (
+        <form key={feed.id} action={saveJobFeed}>
+          <input type="hidden" name="id" value={feed.id} />
+          <label>
+            <input type="checkbox" name="enabled" defaultChecked={feed.enabled} /> Enabled
+          </label>{" "}
+          <input name="url" type="url" size={60} defaultValue={feed.url} required />{" "}
+          <button type="submit">Save</button>{" "}
+          <button type="submit" name="remove" value="1">
+            Remove
+          </button>
+        </form>
+      ))}
+      <form action={addJobFeed}>
+        <input name="url" type="url" size={60} placeholder="https://example.com/jobs?q=engineer" required />{" "}
+        <button type="submit">Add Job Feed</button>
       </form>
     </main>
   );

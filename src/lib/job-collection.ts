@@ -2,9 +2,13 @@ import { nextToken, parseTokens } from "./apify-tokens";
 import type {
   ActorRun,
   ActorRunStore,
+  CollectedJob,
   FunctionRun,
+  Job,
   JobBoardGateway,
   JobBoardSettingsStore,
+  JobFeedReader,
+  JobFeedStore,
   JobStore,
 } from "./gateways";
 import { COLLECT_JOBS, type JobSearch } from "./schema";
@@ -21,12 +25,23 @@ type CollectionDeps = {
   jobBoardSettings: JobBoardSettingsStore;
   actorRuns: ActorRunStore;
   jobs: JobStore;
+  jobFeeds: JobFeedStore;
+  feedReader: JobFeedReader;
   apifyTokens: string;
   now: () => Date;
   sleep: (ms: number) => Promise<void>;
 };
 
 const utcDay = (date: Date) => date.toISOString().slice(0, 10);
+
+const DAY_MS = 24 * 60 * 60_000;
+
+/** A Job with no post date counts as posted on the day it was seen. */
+function withPostDay({ postDay, ageInDays, ...job }: CollectedJob, seenAt: Date): Job {
+  if (postDay) return { ...job, postDay };
+  if (ageInDays != null) return { ...job, postDay: utcDay(new Date(seenAt.getTime() - ageInDays * DAY_MS)) };
+  return { ...job, postDay: utcDay(seenAt) };
+}
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -73,10 +88,26 @@ async function startActorRuns(deps: CollectionDeps, unfinished: ActorRun[], erro
   return started;
 }
 
+/** Each Job Feed is read once, so they are read while the actor runs are still going. */
+async function readJobFeeds(deps: CollectionDeps, errors: string[]) {
+  const feeds = (await deps.jobFeeds.list()).filter(({ enabled }) => enabled);
+
+  for (const feed of feeds) {
+    try {
+      const seenAt = deps.now();
+      const jobs = (await deps.feedReader.read(feed.url)).map((job) => withPostDay(job, seenAt));
+      await deps.jobs.save(jobs);
+    } catch (error) {
+      errors.push(`Job Feed ${feed.url}: ${message(error)}`);
+    }
+  }
+}
+
 export async function runCollection(deps: CollectionDeps) {
   const errors: string[] = [];
   const unfinished = await deps.actorRuns.listUnfinished();
   const runs = [...unfinished, ...(await startActorRuns(deps, unfinished, errors))];
+  await readJobFeeds(deps, errors);
 
   // Counted per Job Board and day: a run left from an earlier day has its own 20.
   const savedPerBoardDay = new Map<string, number>();
@@ -99,7 +130,7 @@ export async function runCollection(deps: CollectionDeps) {
         errors.push(`Actor run ${run.runId} failed`);
       } else {
         // "Today" is the day the run started, so a run saved after midnight keeps its Jobs.
-        const collected = await jobBoard.results(run);
+        const collected = (await jobBoard.results(run)).map((job) => withPostDay(job, run.startedAt));
         const postedToday = collected.filter(({ postDay }) => postDay === utcDay(run.startedAt));
         const boardDay = `${run.actor} ${utcDay(run.startedAt)}`;
         const saved = savedPerBoardDay.get(boardDay) ?? 0;

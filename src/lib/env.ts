@@ -9,6 +9,7 @@ const sharedSchema = z.object({
 
 const functionsSchema = sharedSchema.extend({
   APIFY_TOKENS: z.string().min(1),
+  FIRECRAWL_API_KEY: z.string().min(1),
   TELEGRAM_BOT_TOKEN: z.string().min(1),
   TELEGRAM_CHAT_ID: z.string().min(1),
   DASHBOARD_URL: z.url(),

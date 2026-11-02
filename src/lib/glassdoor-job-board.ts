@@ -1,0 +1,43 @@
+import { z } from "zod";
+import { actorRunJobs, actorRunStatus, startActorRun } from "./apify-actor";
+import type { ActorRun, JobBoardGateway } from "./gateways";
+import type { JobSearch } from "./schema";
+
+const ACTOR = "valig/glassdoor-jobs-scraper";
+const SOURCE = "Glassdoor";
+// A real run confirmed that 1 means the last day, with ageInDays 0 for Jobs posted today.
+const DAYS_OLD = 1;
+
+const itemSchema = z.object({
+  url: z.string(),
+  title: z.string(),
+  employer: z.object({ name: z.string() }),
+  location: z.object({ name: z.string().nullish() }).nullish(),
+  ageInDays: z.number(),
+  description: z.string().nullish(),
+});
+
+export const glassdoorJobBoard: JobBoardGateway = {
+  source: SOURCE,
+  actor: ACTOR,
+
+  start({ keywords, location }: JobSearch, limit: number, token: string) {
+    return startActorRun(ACTOR, { keywords, location, daysOld: DAYS_OLD, limit }, token);
+  },
+
+  status: actorRunStatus,
+
+  results(run: ActorRun) {
+    return actorRunJobs(run, itemSchema, ({ url, title, employer, location, ageInDays, description }) => ({
+      source: SOURCE,
+      title,
+      companyName: employer.name,
+      location: location?.name ?? "",
+      // The query is the Job's ID (?jl=), so it stays.
+      url,
+      ageInDays,
+      description: description ?? null,
+      companyLinkedinUrl: null,
+    }));
+  },
+};

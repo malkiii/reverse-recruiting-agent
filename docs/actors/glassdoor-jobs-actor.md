@@ -43,6 +43,8 @@ One item per job. Fields can be missing when Glassdoor doesn't show them, such a
 
 There is no posted date field, so post day is calculated from `ageInDays`.
 
+A real run on 2026-11-02 with `daysOld: 1` and `limit: 5` returned only Jobs with `ageInDays: 0`, and every field above was present.
+
 ## Output example
 
 From the store page.

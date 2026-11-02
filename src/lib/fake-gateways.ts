@@ -2,6 +2,7 @@ import type {
   ActorRun,
   ActorRunStatus,
   ActorRunStore,
+  CollectedJob,
   FunctionRun,
   FunctionRunResult,
   FunctionRunStore,
@@ -9,6 +10,9 @@ import type {
   JobBoardGateway,
   JobBoardSettings,
   JobBoardSettingsStore,
+  JobFeed,
+  JobFeedReader,
+  JobFeedStore,
   JobStore,
   TelegramGateway,
 } from "./gateways";
@@ -58,7 +62,14 @@ export class FakeJobStore implements JobStore {
   async save(jobs: Job[]) {
     const before = this.jobs.length;
     for (const job of jobs) {
-      if (!this.jobs.some(({ url }) => url === job.url)) this.jobs.push(job);
+      const duplicate = this.jobs.some(
+        (saved) =>
+          saved.url === job.url ||
+          (saved.title.toLowerCase() === job.title.toLowerCase() &&
+            saved.companyName.toLowerCase() === job.companyName.toLowerCase() &&
+            saved.postDay === job.postDay),
+      );
+      if (!duplicate) this.jobs.push(job);
     }
     return this.jobs.length - before;
   }
@@ -100,18 +111,55 @@ export class FakeActorRunStore implements ActorRunStore {
   }
 }
 
+export class FakeJobFeedStore implements JobFeedStore {
+  private feeds: JobFeed[] = [];
+
+  async list() {
+    return this.feeds;
+  }
+
+  async add(url: string) {
+    const feed = { id: this.feeds.length + 1, url, enabled: true };
+    this.feeds.push(feed);
+    return feed;
+  }
+
+  async update(feed: JobFeed) {
+    this.feeds = this.feeds.map((saved) => (saved.id === feed.id ? feed : saved));
+  }
+
+  async remove(id: number) {
+    this.feeds = this.feeds.filter((feed) => feed.id !== id);
+  }
+}
+
+/** Returns the Jobs set for each Job Feed URL, or throws the error set for it. */
+export class FakeJobFeedReader implements JobFeedReader {
+  jobs = new Map<string, CollectedJob[] | Error>();
+  urlsRead: string[] = [];
+
+  async read(url: string) {
+    this.urlsRead.push(url);
+    const result = this.jobs.get(url) ?? [];
+    if (result instanceof Error) throw result;
+    return result;
+  }
+}
+
 /** Each run reports the statuses queued here in turn, stays on the last, and returns the Jobs given. */
 export class FakeJobBoard implements JobBoardGateway {
-  source = "LinkedIn";
-  actor = "worldunboxer/rapid-linkedin-scraper";
   started: { runId: string; search: JobSearch; limit: number; token: string }[] = [];
   statuses: ActorRunStatus[] = ["succeeded"];
   private polls = new Map<string, number>();
 
-  constructor(public jobs: Job[]) {}
+  constructor(
+    public jobs: CollectedJob[],
+    public source = "LinkedIn",
+    public actor = "worldunboxer/rapid-linkedin-scraper",
+  ) {}
 
   async start(search: JobSearch, limit: number, token: string) {
-    const runId = `run-${this.started.length + 1}`;
+    const runId = `${this.source}-run-${this.started.length + 1}`;
     this.started.push({ runId, search, limit, token });
     return runId;
   }

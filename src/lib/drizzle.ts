@@ -9,9 +9,11 @@ import type {
   Job,
   JobBoardSettings,
   JobBoardSettingsStore,
+  JobFeed,
+  JobFeedStore,
   JobStore,
 } from "./gateways";
-import { actorRuns, functionRuns, jobBoardSettings, jobs } from "./schema";
+import { actorRuns, functionRuns, jobBoardSettings, jobFeeds, jobs } from "./schema";
 
 const RUNS_SHOWN = 20;
 const JOBS_SHOWN = 200;
@@ -64,7 +66,8 @@ export function drizzleJobStore(databaseUrl: string): JobStore {
       const inserted = await client(databaseUrl)
         .insert(jobs)
         .values(newJobs)
-        .onConflictDoNothing({ target: jobs.url })
+        // No target, so both Duplicate Job rules are ignored: the URL and the title, Company and post day.
+        .onConflictDoNothing()
         .returning({ id: jobs.id });
       return inserted.length;
     },
@@ -76,6 +79,27 @@ export function drizzleJobStore(databaseUrl: string): JobStore {
         .from(jobs)
         .orderBy(desc(jobs.id))
         .limit(JOBS_SHOWN);
+    },
+  };
+}
+
+export function drizzleJobFeedStore(databaseUrl: string): JobFeedStore {
+  return {
+    list() {
+      return client(databaseUrl).select().from(jobFeeds).orderBy(asc(jobFeeds.id));
+    },
+
+    async add(url: string) {
+      const [feed] = await client(databaseUrl).insert(jobFeeds).values({ url }).returning();
+      return feed;
+    },
+
+    async update({ id, url, enabled }: JobFeed) {
+      await client(databaseUrl).update(jobFeeds).set({ url, enabled }).where(eq(jobFeeds.id, id));
+    },
+
+    async remove(id: number) {
+      await client(databaseUrl).delete(jobFeeds).where(eq(jobFeeds.id, id));
     },
   };
 }

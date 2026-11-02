@@ -23,16 +23,33 @@ export const functionRuns = pgTable(
   ],
 ).enableRLS();
 
-export const jobs = pgTable("jobs", {
+export const jobs = pgTable(
+  "jobs",
+  {
+    id: bigint({ mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+    source: text().notNull(),
+    title: text().notNull(),
+    companyName: text("company_name").notNull(),
+    location: text().notNull(),
+    url: text().notNull().unique(),
+    postDay: date("post_day", { mode: "string" }).notNull(),
+    description: text(),
+    companyLinkedinUrl: text("company_linkedin_url"),
+  },
+  // The second Duplicate Job rule, so the same Job on two sources is saved once.
+  (table) => [
+    uniqueIndex("jobs_title_company_post_day_unique").on(
+      sql`lower(${table.title})`,
+      sql`lower(${table.companyName})`,
+      table.postDay,
+    ),
+  ],
+).enableRLS();
+
+export const jobFeeds = pgTable("job_feeds", {
   id: bigint({ mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
-  source: text().notNull(),
-  title: text().notNull(),
-  companyName: text("company_name").notNull(),
-  location: text().notNull(),
-  url: text().notNull().unique(),
-  postDay: date("post_day", { mode: "string" }).notNull(),
-  description: text(),
-  companyLinkedinUrl: text("company_linkedin_url"),
+  url: text().notNull(),
+  enabled: boolean().notNull().default(true),
 }).enableRLS();
 
 export const jobBoardSettings = pgTable("job_board_settings", {

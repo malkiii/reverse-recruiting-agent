@@ -1,4 +1,4 @@
-import type { actorRuns, functionRuns, jobBoardSettings, jobs, JobSearch } from "./schema";
+import type { actorRuns, functionRuns, jobBoardSettings, jobFeeds, jobs, JobSearch } from "./schema";
 
 export type FunctionRun = typeof functionRuns.$inferSelect;
 
@@ -18,6 +18,8 @@ export interface TelegramGateway {
 }
 
 export type Job = Omit<typeof jobs.$inferSelect, "id">;
+/** A Job as a source returns it. Job Collection works out its post day. */
+export type CollectedJob = Omit<Job, "postDay"> & { postDay?: string | null; ageInDays?: number | null };
 export type JobBoardSettings = typeof jobBoardSettings.$inferSelect;
 export type ActorRun = Omit<typeof actorRuns.$inferSelect, "resultsSavedAt">;
 export type ActorRunStatus = "running" | "succeeded" | "failed";
@@ -42,10 +44,24 @@ export interface ActorRunStore {
   lastToken(): Promise<string | undefined>;
 }
 
+export type JobFeed = typeof jobFeeds.$inferSelect;
+
+export interface JobFeedStore {
+  list(): Promise<JobFeed[]>;
+  add(url: string): Promise<JobFeed>;
+  update(feed: JobFeed): Promise<void>;
+  remove(id: number): Promise<void>;
+}
+
+export interface JobFeedReader {
+  /** Reads the first page of a Job Feed only, in one Firecrawl request. */
+  read(url: string): Promise<CollectedJob[]>;
+}
+
 export interface JobBoardGateway {
   source: string;
   actor: string;
   start(search: JobSearch, limit: number, token: string): Promise<string>;
   status(run: ActorRun): Promise<ActorRunStatus>;
-  results(run: ActorRun): Promise<Job[]>;
+  results(run: ActorRun): Promise<CollectedJob[]>;
 }

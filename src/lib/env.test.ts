@@ -9,6 +9,7 @@ const sharedVariables = {
 const functionsVariables = {
   ...sharedVariables,
   APIFY_TOKENS: "first,second",
+  FIRECRAWL_API_KEY: "fc-key",
   TELEGRAM_BOT_TOKEN: "bot-token",
   TELEGRAM_CHAT_ID: "12345",
   DASHBOARD_URL: "https://dashboard.example.com",

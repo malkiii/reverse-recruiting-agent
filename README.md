@@ -13,6 +13,7 @@ Copy `.env.example` to `.env.local`. The dashboard and Functions each validate o
 | `DATABASE_URL`       | Dashboard, Functions | Supabase transaction pooler connection, port 6543 |
 | `FUNCTIONS_SECRET`   | Dashboard, Functions | Bearer secret that protects Function routes       |
 | `APIFY_TOKENS`       | Functions            | Comma-separated Apify tokens, used round-robin    |
+| `FIRECRAWL_API_KEY`  | Functions            | Firecrawl key, used to read Job Feeds             |
 | `TELEGRAM_BOT_TOKEN` | Functions            | Telegram bot that sends Failure Alerts            |
 | `TELEGRAM_CHAT_ID`   | Functions            | The Admin's Telegram chat                         |
 | `DASHBOARD_URL`      | Functions            | Public dashboard URL, linked from Failure Alerts  |
@@ -47,7 +48,7 @@ A push to `master` runs `.github/workflows/deploy.yml`, which applies migrations
 
 | Where          | Secret                                                                                                        | Purpose                                   |
 | -------------- | ------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
-| Modal          | `DATABASE_URL`, `FUNCTIONS_SECRET`, `APIFY_TOKENS`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `DASHBOARD_URL` | Runtime variables for Functions           |
+| Modal          | `DATABASE_URL`, `FUNCTIONS_SECRET`, `APIFY_TOKENS`, `FIRECRAWL_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `DASHBOARD_URL` | Runtime variables for Functions           |
 | Vercel         | `DATABASE_URL`, `FUNCTIONS_SECRET`, `DASHBOARD_PASSWORD`, `FUNCTIONS_BASE_URL`                                | Runtime variables for the dashboard       |
 | GitHub Actions | `DIRECT_DATABASE_URL`                                                                                         | Direct database connection for migrations |
 | GitHub Actions | `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET`                                                                        | Modal token for `modal deploy`            |

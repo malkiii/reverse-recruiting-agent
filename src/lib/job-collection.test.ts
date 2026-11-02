@@ -5,8 +5,11 @@ import {
   FakeFunctionRunStore,
   FakeJobBoard,
   FakeJobBoardSettingsStore,
+  FakeJobFeedReader,
+  FakeJobFeedStore,
   FakeJobStore,
 } from "./fake-gateways";
+import type { CollectedJob } from "./gateways";
 import { COLLECTION_TIME_LIMIT_MS, runCollection } from "./job-collection";
 import { COLLECT_JOBS } from "./schema";
 
@@ -36,6 +39,8 @@ function setup({ jobs = [job], enabled = true, searches = [search], apifyTokens 
       jobBoardSettings: new FakeJobBoardSettingsStore([{ source: board.source, enabled, searches }]),
       actorRuns: new FakeActorRunStore(),
       jobs: new FakeJobStore(),
+      jobFeeds: new FakeJobFeedStore(),
+      feedReader: new FakeJobFeedReader(),
       apifyTokens,
       now: () => now,
       sleep: async (ms: number) => void delays.push(ms),
@@ -82,7 +87,11 @@ test("searches share the limit and a Job Collection saves at most 20 Jobs", asyn
   const searches = ["a", "b", "c"].map((keywords) => ({ keywords, location: "Remote" }));
   const { board, deps } = setup({ searches });
   board.results = async ({ runId }) =>
-    Array.from({ length: 30 }, (_, index) => ({ ...job, url: `https://example.com/${runId}/${index}` }));
+    Array.from({ length: 30 }, (_, index) => ({
+      ...job,
+      url: `https://example.com/${runId}/${index}`,
+      title: `Job ${runId}/${index}`,
+    }));
 
   await runCollection(deps);
 
@@ -159,9 +168,9 @@ test("an actor run still going after polling stops is left for the next Job Coll
 test("a failed actor run is closed and reported, and the other searches are still saved", async () => {
   const searches = ["a", "b"].map((keywords) => ({ keywords, location: "Remote" }));
   const { board, deps } = setup({ searches });
-  board.status = async ({ runId }) => (runId === "run-1" ? "failed" : "succeeded");
+  board.status = async ({ runId }) => (runId === "LinkedIn-run-1" ? "failed" : "succeeded");
 
-  await expect(runCollection(deps)).rejects.toThrow(/run-1/);
+  await expect(runCollection(deps)).rejects.toThrow(/LinkedIn-run-1/);
 
   expect(await deps.jobs.list()).toEqual([job]);
   expect(await deps.actorRuns.listUnfinished()).toEqual([]);
@@ -239,6 +248,7 @@ test("a large actor run left from an earlier day doesn't use up today's cap", as
     Array.from({ length: 50 }, (_, index) => ({
       ...job,
       url: `https://example.com/${runId}/${index}`,
+      title: `Job ${runId}/${index}`,
       postDay: startedAt.toISOString().slice(0, 10),
     }));
   await deps.actorRuns.save({
@@ -257,7 +267,11 @@ test("a large actor run left from an earlier day doesn't use up today's cap", as
 test("Jobs that were already saved don't count towards the cap", async () => {
   const searches = ["a", "b"].map((keywords) => ({ keywords, location: "Remote" }));
   const { board, deps } = setup({ searches });
-  const alreadySaved = Array.from({ length: 20 }, (_, index) => ({ ...job, url: `https://example.com/old/${index}` }));
+  const alreadySaved = Array.from({ length: 20 }, (_, index) => ({
+    ...job,
+    url: `https://example.com/old/${index}`,
+    title: `Job old/${index}`,
+  }));
   await deps.jobs.save(alreadySaved);
   await deps.actorRuns.save({
     runId: "left-over",
@@ -276,9 +290,127 @@ test("Jobs that were already saved don't count towards the cap", async () => {
   board.results = async ({ runId }) =>
     runId === "left-over"
       ? alreadySaved
-      : Array.from({ length: 25 }, (_, index) => ({ ...job, url: `https://example.com/new/${index}` }));
+      : Array.from({ length: 25 }, (_, index) => ({
+          ...job,
+          url: `https://example.com/new/${index}`,
+          title: `Job new/${index}`,
+        }));
 
   await runCollection(deps);
 
   expect(await deps.jobs.list()).toHaveLength(40);
+});
+
+function glassdoorBoard(jobs: CollectedJob[]) {
+  return new FakeJobBoard(jobs, "Glassdoor", "valig/glassdoor-jobs-scraper");
+}
+
+const glassdoorJob = {
+  source: "Glassdoor",
+  title: "Backend Engineer",
+  companyName: "Globex",
+  location: "New York, NY",
+  url: "https://www.glassdoor.com/job-listing/j?jl=1",
+  description: "<div>Build APIs</div>",
+  companyLinkedinUrl: null,
+};
+
+test("a Glassdoor Job's post day is calculated from its age in days", async () => {
+  const { deps } = setup({ jobs: [] });
+  const old = { ...glassdoorJob, url: "https://www.glassdoor.com/job-listing/j?jl=2", ageInDays: 1 };
+  const glassdoor = glassdoorBoard([{ ...glassdoorJob, ageInDays: 0 }, old]);
+  deps.jobBoards.push(glassdoor);
+  await deps.jobBoardSettings.save({ source: "Glassdoor", enabled: true, searches: [search] });
+
+  await runCollection(deps);
+
+  expect(glassdoor.started.map(({ limit }) => limit)).toEqual([20]);
+  expect(await deps.jobs.list()).toEqual([{ ...glassdoorJob, postDay: "2026-11-01" }]);
+});
+
+test("a Job with the same title, Company and post day on another source is a Duplicate Job", async () => {
+  const { deps } = setup();
+  const sameJob = { ...glassdoorJob, title: "software engineer", companyName: "ACME", ageInDays: 0 };
+  deps.jobBoards.push(glassdoorBoard([sameJob, { ...glassdoorJob, ageInDays: 0 }]));
+  await deps.jobBoardSettings.save({ source: "Glassdoor", enabled: true, searches: [search] });
+
+  await runCollection(deps);
+
+  expect(await deps.jobs.list()).toEqual([job, { ...glassdoorJob, postDay: "2026-11-01" }]);
+});
+
+const feedUrl = "https://jobs.example.com/search?q=engineer";
+
+const feedJob = {
+  source: "Feed: jobs.example.com",
+  title: "Platform Engineer",
+  companyName: "Initech",
+  location: "Remote",
+  url: "https://jobs.example.com/jobs/1",
+  description: null,
+  companyLinkedinUrl: null,
+};
+
+test("a Job Feed's Jobs are saved, and one with no post date counts as posted the day it was first seen", async () => {
+  const { deps } = setup({ jobs: [] });
+  await deps.jobFeeds.add(feedUrl);
+  deps.feedReader.jobs.set(feedUrl, [{ ...feedJob, postDay: null }]);
+
+  await runCollection(deps);
+  await runCollection({ ...deps, now: () => new Date("2026-11-02T22:00:00Z") });
+
+  expect(deps.feedReader.urlsRead).toEqual([feedUrl, feedUrl]);
+  expect(await deps.jobs.list()).toEqual([{ ...feedJob, postDay: "2026-11-01" }]);
+});
+
+test("a disabled Job Feed isn't read", async () => {
+  const { deps } = setup({ jobs: [] });
+  const feed = await deps.jobFeeds.add(feedUrl);
+  await deps.jobFeeds.update({ ...feed, enabled: false });
+  deps.feedReader.jobs.set(feedUrl, [feedJob]);
+
+  await runCollection(deps);
+
+  expect(deps.feedReader.urlsRead).toEqual([]);
+  expect(await deps.jobs.list()).toEqual([]);
+});
+
+test("a failing Job Feed doesn't stop the other sources", async () => {
+  const { deps } = setup();
+  const otherFeed = "https://other.example.com/jobs";
+  await deps.jobFeeds.add(feedUrl);
+  await deps.jobFeeds.add(otherFeed);
+  deps.feedReader.jobs.set(feedUrl, new Error("Firecrawl refused"));
+  deps.feedReader.jobs.set(otherFeed, [{ ...feedJob, postDay: "2026-11-01" }]);
+
+  await expect(runCollection(deps)).rejects.toThrow(/Firecrawl refused/);
+
+  expect(await deps.jobs.list()).toEqual([{ ...feedJob, postDay: "2026-11-01" }, job]);
+});
+
+test("a disabled Glassdoor Job Board starts no actor run while LinkedIn still runs", async () => {
+  const { board, deps } = setup();
+  const glassdoor = glassdoorBoard([{ ...glassdoorJob, ageInDays: 0 }]);
+  deps.jobBoards.push(glassdoor);
+  await deps.jobBoardSettings.save({ source: "Glassdoor", enabled: false, searches: [search] });
+
+  await runCollection(deps);
+
+  expect(glassdoor.started).toEqual([]);
+  expect(board.started).toHaveLength(1);
+  expect(await deps.jobs.list()).toEqual([job]);
+});
+
+test("a failing Glassdoor Job Board doesn't stop LinkedIn or the Job Feeds", async () => {
+  const { deps } = setup();
+  const glassdoor = glassdoorBoard([{ ...glassdoorJob, ageInDays: 0 }]);
+  glassdoor.statuses = ["failed"];
+  deps.jobBoards.push(glassdoor);
+  await deps.jobBoardSettings.save({ source: "Glassdoor", enabled: true, searches: [search] });
+  await deps.jobFeeds.add(feedUrl);
+  deps.feedReader.jobs.set(feedUrl, [{ ...feedJob, postDay: "2026-11-01" }]);
+
+  await expect(runCollection(deps)).rejects.toThrow(/Glassdoor-run-1/);
+
+  expect(await deps.jobs.list()).toEqual([{ ...feedJob, postDay: "2026-11-01" }, job]);
 });

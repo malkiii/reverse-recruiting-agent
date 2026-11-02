@@ -15,6 +15,13 @@
       "when": 1793549755920,
       "tag": "0001_job_collection",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1793648190707,
+      "tag": "0002_glassdoor_and_job_feeds",
+      "breakpoints": true
     }
   ]
 }
