@@ -4,7 +4,6 @@ import postgres from "postgres";
 import type {
   ActorRun,
   ActorRunStore,
-  AlertState,
   FunctionRunResult,
   FunctionRunStore,
   Job,
@@ -92,8 +91,8 @@ export function drizzleJobStore(databaseUrl: string): JobStore {
         .orderBy(asc(jobs.id));
     },
 
-    async setAlertState(id: number, state: AlertState) {
-      await client(databaseUrl).update(jobs).set({ alertState: state }).where(eq(jobs.id, id));
+    async markAlertSent(id: number) {
+      await client(databaseUrl).update(jobs).set({ alertState: "sent" }).where(eq(jobs.id, id));
     },
   };
 }

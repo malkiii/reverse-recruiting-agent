@@ -89,8 +89,8 @@ export class FakeJobStore implements JobStore {
     return this.jobs.filter(({ alertState }) => alertState === "pending").map(({ alertState: _, ...job }) => job);
   }
 
-  async setAlertState(id: number, state: AlertState) {
-    this.jobs = this.jobs.map((job) => (job.id === id ? { ...job, alertState: state } : job));
+  async markAlertSent(id: number) {
+    this.jobs = this.jobs.map((job) => (job.id === id ? { ...job, alertState: "sent" } : job));
   }
 }
 

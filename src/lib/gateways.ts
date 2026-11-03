@@ -35,7 +35,7 @@ export interface JobStore {
   list(): Promise<Job[]>;
   /** Jobs whose Job Alert hasn't gone out yet, oldest first. */
   listPendingAlerts(): Promise<PendingAlertJob[]>;
-  setAlertState(id: number, state: AlertState): Promise<void>;
+  markAlertSent(id: number): Promise<void>;
 }
 
 export interface JobBoardSettingsStore {

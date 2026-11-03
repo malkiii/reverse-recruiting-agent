@@ -432,7 +432,7 @@ test("each new Job is sent as its own Job Alert with a button to its page", asyn
   ]);
 });
 
-test("a Job Collection sends at most 20 Job Alerts, and the rest are never alerted later", async () => {
+test("every new Job is alerted, however many a Job Collection saves", async () => {
   const { deps } = setup({ jobs: [] });
   await deps.jobFeeds.add(feedUrl);
   const jobs = Array.from({ length: 25 }, (_, index) => ({
@@ -446,7 +446,7 @@ test("a Job Collection sends at most 20 Job Alerts, and the rest are never alert
   await runCollection(deps);
   await runCollection(deps);
 
-  expect(deps.telegram.messages.map(({ link }) => link?.url)).toEqual(jobs.slice(0, 20).map(({ url }) => url));
+  expect(deps.telegram.messages.map(({ link }) => link?.url)).toEqual(jobs.map(({ url }) => url));
 });
 
 test("a Job Alert that failed to send is retried on the next Job Collection and never repeated", async () => {
@@ -461,7 +461,7 @@ test("a Job Alert that failed to send is retried on the next Job Collection and 
   expect(deps.telegram.messages.map(({ link }) => link?.url)).toEqual([job.url]);
 });
 
-test("pending Job Alerts from an earlier run come first and share the cap", async () => {
+test("pending Job Alerts from an earlier run are sent first", async () => {
   const { deps } = setup({ jobs: [] });
   await deps.jobFeeds.add(feedUrl);
   const jobs = Array.from({ length: 21 }, (_, index) => ({
@@ -478,7 +478,7 @@ test("pending Job Alerts from an earlier run come first and share the cap", asyn
   deps.feedReader.jobs.set(feedUrl, jobs.slice(1));
   await runCollection(deps);
 
-  expect(deps.telegram.messages.map(({ link }) => link?.url)).toEqual(jobs.slice(0, 20).map(({ url }) => url));
+  expect(deps.telegram.messages.map(({ link }) => link?.url)).toEqual(jobs.map(({ url }) => url));
 });
 
 test("a Job Alert that fails to send doesn't stop the others", async () => {

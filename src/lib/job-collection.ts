@@ -19,7 +19,6 @@ import { COLLECT_JOBS, type JobSearch } from "./schema";
 export const COLLECTION_TIME_LIMIT_MS = 30 * 60_000;
 
 const JOBS_PER_COLLECTION = 20;
-const JOB_ALERTS_PER_COLLECTION = 20;
 const POLL_DELAY_MS = 15_000;
 // Stops well inside the time limit. Whatever is still going is picked up by the next Job Collection.
 const MAX_POLLS = 80;
@@ -197,12 +196,11 @@ export async function runCollection(deps: CollectionDeps) {
 const jobAlertText = ({ title, companyName, location, source }: PendingAlertJob) =>
   `${title} at ${companyName}\n${location} · ${source}`;
 
-/** Pending Jobs past the cap become dashboard-only, so a big run can't flood the Admin later either. */
 async function sendJobAlerts(deps: CollectionDeps, errors: string[]) {
   const pending = await deps.jobs.listPendingAlerts();
   let sent = 0;
 
-  for (const job of pending.slice(0, JOB_ALERTS_PER_COLLECTION)) {
+  for (const job of pending) {
     try {
       await deps.telegram.send(jobAlertText(job), { label: "Open Job", url: job.url });
     } catch (error) {
@@ -211,14 +209,10 @@ async function sendJobAlerts(deps: CollectionDeps, errors: string[]) {
       errors.push(`Job Alert for ${job.url}: ${message(error)}`);
       continue;
     }
-    await deps.jobs.setAlertState(job.id, "sent");
+    await deps.jobs.markAlertSent(job.id);
     sent += 1;
   }
-  const dashboardOnly = Math.max(pending.length - JOB_ALERTS_PER_COLLECTION, 0);
-  console.log(`Sent ${sent} of ${pending.length} pending Job Alert(s), ${dashboardOnly} became dashboard-only`);
-  for (const job of pending.slice(JOB_ALERTS_PER_COLLECTION)) {
-    await deps.jobs.setAlertState(job.id, "dashboard-only");
-  }
+  console.log(`Sent ${sent} of ${pending.length} pending Job Alert(s)`);
 }
 
 /** Matches the claim in FunctionRunStore.start: a run past its time limit no longer counts. */
