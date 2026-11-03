@@ -67,11 +67,17 @@ async function startActorRuns(deps: CollectionDeps, unfinished: ActorRun[], erro
 
   for (const jobBoard of deps.jobBoards) {
     const settings = await deps.jobBoardSettings.get(jobBoard.source);
-    if (!settings?.enabled) continue;
+    if (!settings?.enabled) {
+      console.log(`${jobBoard.source}: disabled, skipped`);
+      continue;
+    }
 
     for (const [index, search] of settings.searches.entries()) {
       const limit = shareLimit(index, settings.searches.length);
-      if (limit === 0 || alreadyRunToday(search, unfinished, jobBoard.actor, deps.now())) continue;
+      if (limit === 0 || alreadyRunToday(search, unfinished, jobBoard.actor, deps.now())) {
+        console.log(`${jobBoard.source} search "${search.keywords}": skipped (limit ${limit} or already run today)`);
+        continue;
+      }
 
       try {
         const token = nextToken(tokens, await deps.actorRuns.lastToken());
@@ -80,7 +86,9 @@ async function startActorRuns(deps: CollectionDeps, unfinished: ActorRun[], erro
         // Saved before polling, so a Function killed from here on loses nothing.
         await deps.actorRuns.save(run);
         started.push(run);
+        console.log(`${jobBoard.source} search "${search.keywords}" in ${search.location}: started actor run ${runId} (limit ${limit})`);
       } catch (error) {
+        console.error(`${jobBoard.source} search "${search.keywords}": failed to start:`, error);
         errors.push(`${jobBoard.source} search "${search.keywords}": ${message(error)}`);
       }
     }
@@ -91,13 +99,16 @@ async function startActorRuns(deps: CollectionDeps, unfinished: ActorRun[], erro
 /** Each Job Feed is read once, so they are read while the actor runs are still going. */
 async function readJobFeeds(deps: CollectionDeps, errors: string[]) {
   const feeds = (await deps.jobFeeds.list()).filter(({ enabled }) => enabled);
+  console.log(`Reading ${feeds.length} enabled Job Feed(s)`);
 
   for (const feed of feeds) {
     try {
       const seenAt = deps.now();
       const jobs = (await deps.feedReader.read(feed.url)).map((job) => withPostDay(job, seenAt));
-      await deps.jobs.save(jobs);
+      const saved = await deps.jobs.save(jobs);
+      console.log(`Job Feed ${feed.url}: read ${jobs.length} Job(s), ${saved} new`);
     } catch (error) {
+      console.error(`Job Feed ${feed.url}: failed:`, error);
       errors.push(`Job Feed ${feed.url}: ${message(error)}`);
     }
   }
@@ -106,6 +117,7 @@ async function readJobFeeds(deps: CollectionDeps, errors: string[]) {
 export async function runCollection(deps: CollectionDeps) {
   const errors: string[] = [];
   const unfinished = await deps.actorRuns.listUnfinished();
+  console.log(`Job Collection started, ${unfinished.length} unfinished actor run(s) from earlier`);
   const runs = [...unfinished, ...(await startActorRuns(deps, unfinished, errors))];
   await readJobFeeds(deps, errors);
 
@@ -115,18 +127,27 @@ export async function runCollection(deps: CollectionDeps) {
 
   for (const run of runs) {
     const jobBoard = deps.jobBoards.find(({ actor }) => actor === run.actor);
-    if (!jobBoard) continue;
+    if (!jobBoard) {
+      console.warn(`Actor run ${run.runId}: no Job Board for actor ${run.actor}, skipped`);
+      continue;
+    }
 
     try {
       let status = await jobBoard.status(run);
+      console.log(`Actor run ${run.runId} (${run.actor}): ${status}`);
       while (status === "running" && pollsLeft > 0) {
         pollsLeft -= 1;
         await deps.sleep(POLL_DELAY_MS);
         status = await jobBoard.status(run);
+        console.log(`Actor run ${run.runId}: ${status} (${pollsLeft} poll(s) left)`);
       }
-      if (status === "running") continue;
+      if (status === "running") {
+        console.log(`Actor run ${run.runId}: still running, left for the next Job Collection`);
+        continue;
+      }
 
       if (status === "failed") {
+        console.error(`Actor run ${run.runId} failed`);
         errors.push(`Actor run ${run.runId} failed`);
       } else {
         // "Today" is the day the run started, so a run saved after midnight keeps its Jobs.
@@ -135,14 +156,20 @@ export async function runCollection(deps: CollectionDeps) {
         const boardDay = `${run.actor} ${utcDay(run.startedAt)}`;
         const saved = savedPerBoardDay.get(boardDay) ?? 0;
         const jobs = postedToday.slice(0, JOBS_PER_COLLECTION - saved);
-        savedPerBoardDay.set(boardDay, saved + (await deps.jobs.save(jobs)));
+        const newJobs = await deps.jobs.save(jobs);
+        savedPerBoardDay.set(boardDay, saved + newJobs);
+        console.log(
+          `Actor run ${run.runId}: ${collected.length} result(s), ${postedToday.length} posted today, ${newJobs} new saved`,
+        );
       }
       await deps.actorRuns.close(run.runId, deps.now());
     } catch (error) {
+      console.error(`Actor run ${run.runId}: failed:`, error);
       errors.push(`Actor run ${run.runId}: ${message(error)}`);
     }
   }
 
+  console.log(`Job Collection finished with ${errors.length} error(s)`);
   if (errors.length > 0) throw new Error(errors.join("; "));
 }
 
