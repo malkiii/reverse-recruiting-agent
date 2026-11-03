@@ -5,6 +5,7 @@ import {
   drizzleJobBoardSettingsStore,
   drizzleJobFeedStore,
   drizzleJobStore,
+  drizzleSkippedApifyTokenStore,
 } from "../lib/drizzle";
 import { parseFunctionsEnv } from "../lib/env";
 import { firecrawlJobFeedReader } from "../lib/firecrawl-job-feed";
@@ -46,6 +47,7 @@ export function functionServices() {
     jobFeeds: drizzleJobFeedStore(DATABASE_URL),
     feedReader: firecrawlJobFeedReader(FIRECRAWL_API_KEY),
     apifyTokens: APIFY_TOKENS,
+    skippedApifyTokens: drizzleSkippedApifyTokenStore(DATABASE_URL),
     telegram: telegramGateway(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID),
     dashboardUrl: DASHBOARD_URL,
   };

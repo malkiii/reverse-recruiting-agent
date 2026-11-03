@@ -13,11 +13,16 @@ export interface FunctionRunStore {
   list(): Promise<FunctionRun[]>;
 }
 
+export type TelegramLink = { label: string; url: string };
+
 export interface TelegramGateway {
-  send(text: string): Promise<void>;
+  /** Sends a message, with one URL button when a link is given. */
+  send(text: string, link?: TelegramLink): Promise<void>;
 }
 
-export type Job = Omit<typeof jobs.$inferSelect, "id">;
+export type Job = Omit<typeof jobs.$inferSelect, "id" | "alertState">;
+export type AlertState = (typeof jobs.$inferSelect)["alertState"];
+export type PendingAlertJob = Job & { id: number };
 /** A Job as a source returns it. Job Collection works out its post day. */
 export type CollectedJob = Omit<Job, "postDay"> & { postDay?: string | null; ageInDays?: number | null };
 export type JobBoardSettings = typeof jobBoardSettings.$inferSelect;
@@ -28,6 +33,9 @@ export interface JobStore {
   /** Ignores any Job whose URL is already saved, and returns how many were new. */
   save(jobs: Job[]): Promise<number>;
   list(): Promise<Job[]>;
+  /** Jobs whose Job Alert hasn't gone out yet, oldest first. */
+  listPendingAlerts(): Promise<PendingAlertJob[]>;
+  setAlertState(id: number, state: AlertState): Promise<void>;
 }
 
 export interface JobBoardSettingsStore {
@@ -42,6 +50,12 @@ export interface ActorRunStore {
   /** Closes the run, whether its results were saved or it failed and had none. */
   close(runId: string, closedAt: Date): Promise<void>;
   lastToken(): Promise<string | undefined>;
+}
+
+export interface SkippedApifyTokenStore {
+  /** Tokens that can't be used again until after the given time. */
+  listSkipped(at: Date): Promise<string[]>;
+  skip(token: string, usableAt: Date): Promise<void>;
 }
 
 export type JobFeed = typeof jobFeeds.$inferSelect;

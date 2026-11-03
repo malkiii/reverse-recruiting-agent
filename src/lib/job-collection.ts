@@ -1,4 +1,4 @@
-import { nextToken, parseTokens } from "./apify-tokens";
+import { AllApifyTokensUsedUpError, apifyTokenRouter } from "./apify-tokens";
 import type {
   ActorRun,
   ActorRunStore,
@@ -10,12 +10,16 @@ import type {
   JobFeedReader,
   JobFeedStore,
   JobStore,
+  PendingAlertJob,
+  SkippedApifyTokenStore,
+  TelegramGateway,
 } from "./gateways";
 import { COLLECT_JOBS, type JobSearch } from "./schema";
 
 export const COLLECTION_TIME_LIMIT_MS = 30 * 60_000;
 
 const JOBS_PER_COLLECTION = 20;
+const JOB_ALERTS_PER_COLLECTION = 20;
 const POLL_DELAY_MS = 15_000;
 // Stops well inside the time limit. Whatever is still going is picked up by the next Job Collection.
 const MAX_POLLS = 80;
@@ -28,6 +32,8 @@ type CollectionDeps = {
   jobFeeds: JobFeedStore;
   feedReader: JobFeedReader;
   apifyTokens: string;
+  skippedApifyTokens: SkippedApifyTokenStore;
+  telegram: TelegramGateway;
   now: () => Date;
   sleep: (ms: number) => Promise<void>;
 };
@@ -62,7 +68,12 @@ function alreadyRunToday(search: JobSearch, unfinished: ActorRun[], actor: strin
 }
 
 async function startActorRuns(deps: CollectionDeps, unfinished: ActorRun[], errors: string[]) {
-  const tokens = parseTokens(deps.apifyTokens);
+  const router = apifyTokenRouter({
+    apifyTokens: deps.apifyTokens,
+    skippedTokens: deps.skippedApifyTokens,
+    lastToken: () => deps.actorRuns.lastToken(),
+    now: deps.now,
+  });
   const started: ActorRun[] = [];
 
   for (const jobBoard of deps.jobBoards) {
@@ -80,14 +91,22 @@ async function startActorRuns(deps: CollectionDeps, unfinished: ActorRun[], erro
       }
 
       try {
-        const token = nextToken(tokens, await deps.actorRuns.lastToken());
-        const runId = await jobBoard.start(search, limit, token);
+        const { token, result: runId } = await router.withToken((token) => jobBoard.start(search, limit, token));
         const run = { runId, actor: jobBoard.actor, token, search, startedAt: deps.now() };
         // Saved before polling, so a Function killed from here on loses nothing.
         await deps.actorRuns.save(run);
         started.push(run);
         console.log(`${jobBoard.source} search "${search.keywords}" in ${search.location}: started actor run ${runId} (limit ${limit})`);
       } catch (error) {
+        if (error instanceof AllApifyTokensUsedUpError) {
+          // No other search can start either. Job Feeds and runs already started still go ahead.
+          console.error(error.message);
+          errors.push(error.message);
+          await deps.telegram
+            .send(`${error.message}. Top up a token to collect from Job Boards.`)
+            .catch(console.error);
+          return started;
+        }
         console.error(`${jobBoard.source} search "${search.keywords}": failed to start:`, error);
         errors.push(`${jobBoard.source} search "${search.keywords}": ${message(error)}`);
       }
@@ -169,8 +188,37 @@ export async function runCollection(deps: CollectionDeps) {
     }
   }
 
+  await sendJobAlerts(deps, errors);
+
   console.log(`Job Collection finished with ${errors.length} error(s)`);
   if (errors.length > 0) throw new Error(errors.join("; "));
+}
+
+const jobAlertText = ({ title, companyName, location, source }: PendingAlertJob) =>
+  `${title} at ${companyName}\n${location} · ${source}`;
+
+/** Pending Jobs past the cap become dashboard-only, so a big run can't flood the Admin later either. */
+async function sendJobAlerts(deps: CollectionDeps, errors: string[]) {
+  const pending = await deps.jobs.listPendingAlerts();
+  let sent = 0;
+
+  for (const job of pending.slice(0, JOB_ALERTS_PER_COLLECTION)) {
+    try {
+      await deps.telegram.send(jobAlertText(job), { label: "Open Job", url: job.url });
+    } catch (error) {
+      // Left pending, so the next Job Collection retries it.
+      console.error(`Job Alert for ${job.url}: failed:`, error);
+      errors.push(`Job Alert for ${job.url}: ${message(error)}`);
+      continue;
+    }
+    await deps.jobs.setAlertState(job.id, "sent");
+    sent += 1;
+  }
+  const dashboardOnly = Math.max(pending.length - JOB_ALERTS_PER_COLLECTION, 0);
+  console.log(`Sent ${sent} of ${pending.length} pending Job Alert(s), ${dashboardOnly} became dashboard-only`);
+  for (const job of pending.slice(JOB_ALERTS_PER_COLLECTION)) {
+    await deps.jobs.setAlertState(job.id, "dashboard-only");
+  }
 }
 
 /** Matches the claim in FunctionRunStore.start: a run past its time limit no longer counts. */

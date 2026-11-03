@@ -35,6 +35,10 @@ export const jobs = pgTable(
     postDay: date("post_day", { mode: "string" }).notNull(),
     description: text(),
     companyLinkedinUrl: text("company_linkedin_url"),
+    // Jobs that existed at go-live, or that older code saves, are dashboard-only. Job Collection saves new Jobs as pending.
+    alertState: text("alert_state", { enum: ["pending", "sent", "dashboard-only"] })
+      .notNull()
+      .default("dashboard-only"),
   },
   // The second Duplicate Job rule, so the same Job on two sources is saved once.
   (table) => [
@@ -56,6 +60,12 @@ export const jobBoardSettings = pgTable("job_board_settings", {
   source: text().primaryKey(),
   enabled: boolean().notNull().default(false),
   searches: jsonb().$type<JobSearch[]>().notNull().default([]),
+}).enableRLS();
+
+/** A rate-limited or out-of-credit Apify token, and when it can be used again. */
+export const skippedApifyTokens = pgTable("skipped_apify_tokens", {
+  token: text().primaryKey(),
+  usableAt: timestamp("usable_at", { withTimezone: true }).notNull(),
 }).enableRLS();
 
 export const actorRuns = pgTable("actor_runs", {

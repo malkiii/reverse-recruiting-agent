@@ -8,7 +8,10 @@ import {
   FakeJobFeedReader,
   FakeJobFeedStore,
   FakeJobStore,
+  FakeSkippedApifyTokenStore,
+  FakeTelegram,
 } from "./fake-gateways";
+import { ApifyTokenUsedUpError } from "./apify-tokens";
 import type { CollectedJob } from "./gateways";
 import { COLLECTION_TIME_LIMIT_MS, runCollection } from "./job-collection";
 import { COLLECT_JOBS } from "./schema";
@@ -42,6 +45,8 @@ function setup({ jobs = [job], enabled = true, searches = [search], apifyTokens 
       jobFeeds: new FakeJobFeedStore(),
       feedReader: new FakeJobFeedReader(),
       apifyTokens,
+      skippedApifyTokens: new FakeSkippedApifyTokenStore(),
+      telegram: new FakeTelegram(),
       now: () => now,
       sleep: async (ms: number) => void delays.push(ms),
     },
@@ -413,4 +418,96 @@ test("a failing Glassdoor Job Board doesn't stop LinkedIn or the Job Feeds", asy
   await expect(runCollection(deps)).rejects.toThrow(/Glassdoor-run-1/);
 
   expect(await deps.jobs.list()).toEqual([{ ...feedJob, postDay: "2026-11-01" }, job]);
+});
+
+test("each new Job is sent as its own Job Alert with a button to its page", async () => {
+  const other = { ...job, url: "https://www.linkedin.com/jobs/view/2", title: "Data Engineer" };
+  const { deps } = setup({ jobs: [job, other] });
+
+  await runCollection(deps);
+
+  expect(deps.telegram.messages).toEqual([
+    { text: "Software Engineer at Acme\nRemote · LinkedIn", link: { label: "Open Job", url: job.url } },
+    { text: "Data Engineer at Acme\nRemote · LinkedIn", link: { label: "Open Job", url: other.url } },
+  ]);
+});
+
+test("a Job Collection sends at most 20 Job Alerts, and the rest are never alerted later", async () => {
+  const { deps } = setup({ jobs: [] });
+  await deps.jobFeeds.add(feedUrl);
+  const jobs = Array.from({ length: 25 }, (_, index) => ({
+    ...feedJob,
+    url: `https://jobs.example.com/jobs/${index}`,
+    title: `Job ${index}`,
+    postDay: "2026-11-01",
+  }));
+  deps.feedReader.jobs.set(feedUrl, jobs);
+
+  await runCollection(deps);
+  await runCollection(deps);
+
+  expect(deps.telegram.messages.map(({ link }) => link?.url)).toEqual(jobs.slice(0, 20).map(({ url }) => url));
+});
+
+test("a Job Alert that failed to send is retried on the next Job Collection and never repeated", async () => {
+  const { deps } = setup();
+  deps.telegram.failing = true;
+
+  await expect(runCollection(deps)).rejects.toThrow(/Telegram is down/);
+  deps.telegram.failing = false;
+  await runCollection(deps);
+  await runCollection(deps);
+
+  expect(deps.telegram.messages.map(({ link }) => link?.url)).toEqual([job.url]);
+});
+
+test("pending Job Alerts from an earlier run come first and share the cap", async () => {
+  const { deps } = setup({ jobs: [] });
+  await deps.jobFeeds.add(feedUrl);
+  const jobs = Array.from({ length: 21 }, (_, index) => ({
+    ...feedJob,
+    url: `https://jobs.example.com/jobs/${index}`,
+    title: `Job ${index}`,
+    postDay: "2026-11-01",
+  }));
+  deps.feedReader.jobs.set(feedUrl, jobs.slice(0, 1));
+  deps.telegram.failing = true;
+  await expect(runCollection(deps)).rejects.toThrow();
+
+  deps.telegram.failing = false;
+  deps.feedReader.jobs.set(feedUrl, jobs.slice(1));
+  await runCollection(deps);
+
+  expect(deps.telegram.messages.map(({ link }) => link?.url)).toEqual(jobs.slice(0, 20).map(({ url }) => url));
+});
+
+test("a Job Alert that fails to send doesn't stop the others", async () => {
+  const other = { ...job, url: "https://www.linkedin.com/jobs/view/2", title: "Data Engineer" };
+  const { deps } = setup({ jobs: [job, other] });
+  const send = deps.telegram.send.bind(deps.telegram);
+  deps.telegram.send = async (text, link) => {
+    if (link?.url === job.url) throw new Error("Telegram refused the message: 400");
+    await send(text, link);
+  };
+
+  await expect(runCollection(deps)).rejects.toThrow(/Telegram refused/);
+
+  expect(deps.telegram.messages.map(({ link }) => link?.url)).toEqual([other.url]);
+});
+
+test("when all Apify tokens are used up, the Job Collection fails and the Admin is alerted once", async () => {
+  const searches = ["a", "b"].map((keywords) => ({ keywords, location: "Remote" }));
+  const { board, deps } = setup({ jobs: [], searches, apifyTokens: "first,second" });
+  board.start = async () => {
+    throw new ApifyTokenUsedUpError(402);
+  };
+  await deps.jobFeeds.add(feedUrl);
+  deps.feedReader.jobs.set(feedUrl, [{ ...feedJob, postDay: "2026-11-01" }]);
+
+  await expect(runCollection(deps)).rejects.toThrow(/All Apify tokens are used up/);
+
+  expect(deps.telegram.sent).toEqual([
+    "All Apify tokens are used up until the next UTC day. Top up a token to collect from Job Boards.",
+    "Platform Engineer at Initech\nRemote · Feed: jobs.example.com",
+  ]);
 });

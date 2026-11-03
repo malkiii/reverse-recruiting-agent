@@ -2,6 +2,7 @@ import type {
   ActorRun,
   ActorRunStatus,
   ActorRunStore,
+  AlertState,
   CollectedJob,
   FunctionRun,
   FunctionRunResult,
@@ -14,7 +15,9 @@ import type {
   JobFeedReader,
   JobFeedStore,
   JobStore,
+  SkippedApifyTokenStore,
   TelegramGateway,
+  TelegramLink,
 } from "./gateways";
 import { COLLECT_JOBS, type JobSearch } from "./schema";
 
@@ -47,17 +50,21 @@ export class FakeFunctionRunStore implements FunctionRunStore {
 }
 
 export class FakeTelegram implements TelegramGateway {
-  sent: string[] = [];
+  messages: { text: string; link?: TelegramLink }[] = [];
   failing = false;
 
-  async send(text: string) {
+  get sent() {
+    return this.messages.map(({ text }) => text);
+  }
+
+  async send(text: string, link?: TelegramLink) {
     if (this.failing) throw new Error("Telegram is down");
-    this.sent.push(text);
+    this.messages.push(link ? { text, link } : { text });
   }
 }
 
 export class FakeJobStore implements JobStore {
-  private jobs: Job[] = [];
+  private jobs: (Job & { id: number; alertState: AlertState })[] = [];
 
   async save(jobs: Job[]) {
     const before = this.jobs.length;
@@ -69,13 +76,21 @@ export class FakeJobStore implements JobStore {
             saved.companyName.toLowerCase() === job.companyName.toLowerCase() &&
             saved.postDay === job.postDay),
       );
-      if (!duplicate) this.jobs.push(job);
+      if (!duplicate) this.jobs.push({ ...job, id: this.jobs.length + 1, alertState: "pending" });
     }
     return this.jobs.length - before;
   }
 
-  async list() {
-    return this.jobs;
+  async list(): Promise<Job[]> {
+    return this.jobs.map(({ id: _id, alertState: _alertState, ...job }) => job);
+  }
+
+  async listPendingAlerts() {
+    return this.jobs.filter(({ alertState }) => alertState === "pending").map(({ alertState: _, ...job }) => job);
+  }
+
+  async setAlertState(id: number, state: AlertState) {
+    this.jobs = this.jobs.map((job) => (job.id === id ? { ...job, alertState: state } : job));
   }
 }
 
@@ -108,6 +123,18 @@ export class FakeActorRunStore implements ActorRunStore {
 
   async lastToken() {
     return this.runs.at(-1)?.token;
+  }
+}
+
+export class FakeSkippedApifyTokenStore implements SkippedApifyTokenStore {
+  usableAt = new Map<string, Date>();
+
+  async listSkipped(at: Date) {
+    return [...this.usableAt].filter(([, usableAt]) => usableAt > at).map(([token]) => token);
+  }
+
+  async skip(token: string, usableAt: Date) {
+    this.usableAt.set(token, usableAt);
   }
 }
 

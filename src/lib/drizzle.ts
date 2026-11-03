@@ -1,9 +1,10 @@
-import { and, asc, desc, eq, getTableColumns, isNull, lte } from "drizzle-orm";
+import { and, asc, desc, eq, getTableColumns, gt, isNull, lte } from "drizzle-orm";
 import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import type {
   ActorRun,
   ActorRunStore,
+  AlertState,
   FunctionRunResult,
   FunctionRunStore,
   Job,
@@ -12,8 +13,9 @@ import type {
   JobFeed,
   JobFeedStore,
   JobStore,
+  SkippedApifyTokenStore,
 } from "./gateways";
-import { actorRuns, functionRuns, jobBoardSettings, jobFeeds, jobs } from "./schema";
+import { actorRuns, functionRuns, jobBoardSettings, jobFeeds, jobs, skippedApifyTokens } from "./schema";
 
 const RUNS_SHOWN = 20;
 const JOBS_SHOWN = 200;
@@ -65,7 +67,7 @@ export function drizzleJobStore(databaseUrl: string): JobStore {
       if (newJobs.length === 0) return 0;
       const inserted = await client(databaseUrl)
         .insert(jobs)
-        .values(newJobs)
+        .values(newJobs.map((job) => ({ ...job, alertState: "pending" as const })))
         // No target, so both Duplicate Job rules are ignored: the URL and the title, Company and post day.
         .onConflictDoNothing()
         .returning({ id: jobs.id });
@@ -73,12 +75,25 @@ export function drizzleJobStore(databaseUrl: string): JobStore {
     },
 
     list() {
-      const { id: _id, ...columns } = getTableColumns(jobs);
+      const { id: _id, alertState: _alertState, ...columns } = getTableColumns(jobs);
       return client(databaseUrl)
         .select(columns)
         .from(jobs)
         .orderBy(desc(jobs.id))
         .limit(JOBS_SHOWN);
+    },
+
+    listPendingAlerts() {
+      const { alertState: _alertState, ...columns } = getTableColumns(jobs);
+      return client(databaseUrl)
+        .select(columns)
+        .from(jobs)
+        .where(eq(jobs.alertState, "pending"))
+        .orderBy(asc(jobs.id));
+    },
+
+    async setAlertState(id: number, state: AlertState) {
+      await client(databaseUrl).update(jobs).set({ alertState: state }).where(eq(jobs.id, id));
     },
   };
 }
@@ -160,6 +175,25 @@ export function drizzleActorRunStore(databaseUrl: string): ActorRunStore {
         .orderBy(desc(actorRuns.startedAt))
         .limit(1);
       return run?.token;
+    },
+  };
+}
+
+export function drizzleSkippedApifyTokenStore(databaseUrl: string): SkippedApifyTokenStore {
+  return {
+    async listSkipped(at: Date) {
+      const rows = await client(databaseUrl)
+        .select({ token: skippedApifyTokens.token })
+        .from(skippedApifyTokens)
+        .where(gt(skippedApifyTokens.usableAt, at));
+      return rows.map(({ token }) => token);
+    },
+
+    async skip(token: string, usableAt: Date) {
+      await client(databaseUrl)
+        .insert(skippedApifyTokens)
+        .values({ token, usableAt })
+        .onConflictDoUpdate({ target: skippedApifyTokens.token, set: { usableAt } });
     },
   };
 }
