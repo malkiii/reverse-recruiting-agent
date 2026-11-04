@@ -7,6 +7,7 @@ const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
 
 const PROMPT =
   "Extract every job listed on this page. Use the link to each job's own page as its url. " +
+  "Skip any job whose hiring company's name is not shown, such as confidential or anonymous listings. " +
   // Only a written date: a relative age such as "3 days ago" would make the model guess today's date.
   "Give postedDate as YYYY-MM-DD only when the page shows the full date the job was posted. " +
   "Leave it empty for relative ages such as '3 days ago' or when no date is shown. " +
