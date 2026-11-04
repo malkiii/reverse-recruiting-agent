@@ -4,6 +4,7 @@ import postgres from "postgres";
 import type {
   ActorRun,
   ActorRunStore,
+  ExcludedKeywordStore,
   FunctionRunResult,
   FunctionRunStore,
   Job,
@@ -14,7 +15,7 @@ import type {
   JobStore,
   SkippedApifyTokenStore,
 } from "./gateways";
-import { actorRuns, functionRuns, jobBoardSettings, jobFeeds, jobs, skippedApifyTokens } from "./schema";
+import { actorRuns, excludedKeywords, functionRuns, jobBoardSettings, jobFeeds, jobs, skippedApifyTokens } from "./schema";
 
 const RUNS_SHOWN = 20;
 const JOBS_SHOWN = 200;
@@ -136,6 +137,27 @@ export function drizzleJobBoardSettingsStore(databaseUrl: string): JobBoardSetti
           target: jobBoardSettings.source,
           set: { enabled: settings.enabled, searches: settings.searches },
         });
+    },
+  };
+}
+
+export function drizzleExcludedKeywordStore(databaseUrl: string): ExcludedKeywordStore {
+  return {
+    async list() {
+      const rows = await client(databaseUrl).select().from(excludedKeywords).orderBy(asc(excludedKeywords.keyword));
+      return rows.map(({ keyword }) => keyword);
+    },
+
+    async replace(keywords: string[]) {
+      await client(databaseUrl).transaction(async (tx) => {
+        await tx.delete(excludedKeywords);
+        if (keywords.length > 0) {
+          await tx
+            .insert(excludedKeywords)
+            .values(keywords.map((keyword) => ({ keyword })))
+            .onConflictDoNothing();
+        }
+      });
     },
   };
 }

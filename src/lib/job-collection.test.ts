@@ -2,6 +2,7 @@ import { expect, test } from "vitest";
 import { acceptFunctionRequest } from "../functions/accept-function-request";
 import {
   FakeActorRunStore,
+  FakeExcludedKeywordStore,
   FakeFunctionRunStore,
   FakeImages,
   FakeJobBoard,
@@ -14,7 +15,7 @@ import {
 } from "./fake-gateways";
 import { ApifyTokenUsedUpError } from "./apify-tokens";
 import type { CollectedJob } from "./gateways";
-import { COLLECTION_TIME_LIMIT_MS, runCollection } from "./job-collection";
+import { COLLECTION_TIME_LIMIT_MS, excludedTitleMatcher, runCollection } from "./job-collection";
 import { COLLECT_JOBS } from "./schema";
 
 const now = new Date("2026-11-01T22:00:00Z");
@@ -33,7 +34,13 @@ const job = {
 
 const search = { keywords: "engineer", location: "Remote" };
 
-function setup({ jobs = [job], enabled = true, searches = [search], apifyTokens = "token" } = {}) {
+function setup({
+  jobs = [job],
+  enabled = true,
+  searches = [search],
+  apifyTokens = "token",
+  excludedKeywords = [] as string[],
+} = {}) {
   const board = new FakeJobBoard(jobs);
   const delays: number[] = [];
   return {
@@ -42,6 +49,7 @@ function setup({ jobs = [job], enabled = true, searches = [search], apifyTokens 
     deps: {
       jobBoards: [board],
       jobBoardSettings: new FakeJobBoardSettingsStore([{ source: board.source, enabled, searches }]),
+      excludedKeywords: new FakeExcludedKeywordStore(excludedKeywords),
       actorRuns: new FakeActorRunStore(),
       jobs: new FakeJobStore(),
       jobFeeds: new FakeJobFeedStore(),
@@ -62,6 +70,39 @@ test("a Job Collection saves the Jobs found, with the Company's LinkedIn page", 
   await runCollection(deps);
 
   expect(await deps.jobs.list()).toEqual([job]);
+});
+
+test("a Job whose title has an Excluded Keyword isn't saved", async () => {
+  const senior = { ...job, title: "Senior Software Engineer", url: "https://www.linkedin.com/jobs/view/2" };
+  const { deps } = setup({ jobs: [senior, job], excludedKeywords: ["senior"] });
+
+  await runCollection(deps);
+
+  expect(await deps.jobs.list()).toEqual([job]);
+});
+
+test("a Job Feed Job whose title has an Excluded Keyword isn't saved", async () => {
+  const { deps } = setup({ enabled: false, excludedKeywords: ["Lead"] });
+  const url = "https://example.com/jobs";
+  await deps.jobFeeds.add(url);
+  const lead = { ...job, title: "Tech Lead", url: "https://example.com/jobs/2" };
+  deps.feedReader.jobs.set(url, [lead, job]);
+
+  await runCollection(deps);
+
+  expect(await deps.jobs.list()).toEqual([job]);
+});
+
+test("Excluded Keywords match whole words and phrases, ignoring case", () => {
+  const isExcluded = excludedTitleMatcher(["senior", "Sr.", "team lead", "C++"]);
+
+  expect(isExcluded("SENIOR Engineer")).toBe(true);
+  expect(isExcluded("Sr. Developer")).toBe(true);
+  expect(isExcluded("Team Lead, Payments")).toBe(true);
+  expect(isExcluded("C++ Developer")).toBe(true);
+  expect(isExcluded("Seniority Analyst")).toBe(false);
+  expect(isExcluded("Lead Engineer")).toBe(false);
+  expect(excludedTitleMatcher([])("Senior Engineer")).toBe(false);
 });
 
 test("a disabled Job Board starts no actor run", async () => {

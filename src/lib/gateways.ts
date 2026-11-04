@@ -59,6 +59,12 @@ export interface JobBoardSettingsStore {
   save(settings: JobBoardSettings): Promise<void>;
 }
 
+export interface ExcludedKeywordStore {
+  list(): Promise<string[]>;
+  /** Replaces every Excluded Keyword with the given ones. */
+  replace(keywords: string[]): Promise<void>;
+}
+
 export interface ActorRunStore {
   save(run: ActorRun): Promise<void>;
   /** Every actor run that hasn't been closed yet, oldest first. */

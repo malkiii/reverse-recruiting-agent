@@ -4,6 +4,7 @@ import type {
   ActorRunStore,
   AlertState,
   CollectedJob,
+  ExcludedKeywordStore,
   FunctionRun,
   FunctionRunResult,
   FunctionRunStore,
@@ -130,6 +131,18 @@ export class FakeJobBoardSettingsStore implements JobBoardSettingsStore {
 
   async save(settings: JobBoardSettings) {
     this.settings = [...this.settings.filter(({ source }) => source !== settings.source), settings];
+  }
+}
+
+export class FakeExcludedKeywordStore implements ExcludedKeywordStore {
+  constructor(private keywords: string[] = []) {}
+
+  async list() {
+    return this.keywords;
+  }
+
+  async replace(keywords: string[]) {
+    this.keywords = [...new Set(keywords)];
   }
 }
 

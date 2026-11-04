@@ -30,6 +30,10 @@ _Avoid_: Repost
 The daily gathering of new Jobs from every enabled Job Board and Job Feed.
 _Avoid_: Scrape, sync
 
+**Excluded Keyword**:
+A word or phrase set by the Admin. A Job whose title contains it as a whole word, ignoring case, is skipped by Job Collection and never saved.
+_Avoid_: Blocklist, negative keyword
+
 **Job Alert**:
 The chat message telling the Admin about one new Job, linking to its original page. It carries no approval.
 _Avoid_: Notification, Prepare prompt

@@ -3,6 +3,7 @@ import type {
   ActorRun,
   ActorRunStore,
   CollectedJob,
+  ExcludedKeywordStore,
   FunctionRun,
   Image,
   ImageGateway,
@@ -30,6 +31,7 @@ const MAX_POLLS = 80;
 type CollectionDeps = {
   jobBoards: JobBoardGateway[];
   jobBoardSettings: JobBoardSettingsStore;
+  excludedKeywords: ExcludedKeywordStore;
   actorRuns: ActorRunStore;
   jobs: JobStore;
   jobFeeds: JobFeedStore;
@@ -51,6 +53,24 @@ function withPostDay({ postDay, ageInDays, ...job }: CollectedJob, seenAt: Date)
   if (postDay) return { ...job, postDay };
   if (ageInDays != null) return { ...job, postDay: utcDay(new Date(seenAt.getTime() - ageInDays * DAY_MS)) };
   return { ...job, postDay: utcDay(seenAt) };
+}
+
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** Matches any Excluded Keyword as a whole word or phrase in a title, ignoring case. */
+export function excludedTitleMatcher(keywords: string[]) {
+  const patterns = keywords.map((keyword) => keyword.trim()).filter(Boolean).map(escapeRegExp);
+  if (patterns.length === 0) return () => false;
+  const regex = new RegExp(`(?<![\\p{L}\\p{N}])(?:${patterns.join("|")})(?![\\p{L}\\p{N}])`, "iu");
+  return (title: string) => regex.test(title);
+}
+
+type TitleFilter = (title: string) => boolean;
+
+function withoutExcluded<T extends { title: string }>(jobs: T[], isExcluded: TitleFilter, label: string) {
+  const kept = jobs.filter(({ title }) => !isExcluded(title));
+  if (kept.length < jobs.length) console.log(`${label}: ${jobs.length - kept.length} Job(s) skipped by an Excluded Keyword`);
+  return kept;
 }
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -120,14 +140,15 @@ async function startActorRuns(deps: CollectionDeps, unfinished: ActorRun[], erro
 }
 
 /** Each Job Feed is read once, so they are read while the actor runs are still going. */
-async function readJobFeeds(deps: CollectionDeps, errors: string[]) {
+async function readJobFeeds(deps: CollectionDeps, isExcluded: TitleFilter, errors: string[]) {
   const feeds = (await deps.jobFeeds.list()).filter(({ enabled }) => enabled);
   console.log(`Reading ${feeds.length} enabled Job Feed(s)`);
 
   for (const feed of feeds) {
     try {
       const seenAt = deps.now();
-      const jobs = (await deps.feedReader.read(feed.url)).map((job) => withPostDay(job, seenAt));
+      const read = withoutExcluded(await deps.feedReader.read(feed.url), isExcluded, `Job Feed ${feed.url}`);
+      const jobs = read.map((job) => withPostDay(job, seenAt));
       const saved = await deps.jobs.save(jobs);
       console.log(`Job Feed ${feed.url}: read ${jobs.length} Job(s), ${saved} new`);
     } catch (error) {
@@ -141,8 +162,9 @@ export async function runCollection(deps: CollectionDeps) {
   const errors: string[] = [];
   const unfinished = await deps.actorRuns.listUnfinished();
   console.log(`Job Collection started, ${unfinished.length} unfinished actor run(s) from earlier`);
+  const isExcluded = excludedTitleMatcher(await deps.excludedKeywords.list());
   const runs = [...unfinished, ...(await startActorRuns(deps, unfinished, errors))];
-  await readJobFeeds(deps, errors);
+  await readJobFeeds(deps, isExcluded, errors);
 
   // Counted per Job Board and day: a run left from an earlier day has its own 20.
   const savedPerBoardDay = new Map<string, number>();
@@ -174,7 +196,10 @@ export async function runCollection(deps: CollectionDeps) {
         errors.push(`Actor run ${run.runId} failed`);
       } else {
         // "Today" is the day the run started, so a run saved after midnight keeps its Jobs.
-        const collected = (await jobBoard.results(run)).map((job) => withPostDay(job, run.startedAt));
+        // Skipped before the cap, so an excluded Job doesn't take the place of a wanted one.
+        const collected = withoutExcluded(await jobBoard.results(run), isExcluded, `Actor run ${run.runId}`).map(
+          (job) => withPostDay(job, run.startedAt),
+        );
         const postedToday = collected.filter(({ postDay }) => postDay === utcDay(run.startedAt));
         const boardDay = `${run.actor} ${utcDay(run.startedAt)}`;
         const saved = savedPerBoardDay.get(boardDay) ?? 0;

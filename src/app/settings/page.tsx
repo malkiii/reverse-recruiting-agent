@@ -1,7 +1,7 @@
 import { revalidatePath } from "next/cache";
 import Link from "next/link";
 import { connection } from "next/server";
-import { drizzleJobBoardSettingsStore, drizzleJobFeedStore } from "@/lib/drizzle";
+import { drizzleExcludedKeywordStore, drizzleJobBoardSettingsStore, drizzleJobFeedStore } from "@/lib/drizzle";
 import { parseDashboardEnv } from "@/lib/env";
 import { glassdoorJobBoard } from "@/lib/glassdoor-job-board";
 import { linkedInJobBoard } from "@/lib/linkedin-job-board";
@@ -53,6 +53,18 @@ async function saveGlassdoor(formData: FormData) {
   revalidatePath("/settings");
 }
 
+async function saveExcludedKeywords(formData: FormData) {
+  "use server";
+
+  const keywords = String(formData.get("keywords"))
+    .split(",")
+    .map((keyword) => keyword.trim())
+    .filter(Boolean);
+  const unique = [...new Map(keywords.map((keyword) => [keyword.toLowerCase(), keyword])).values()];
+  await drizzleExcludedKeywordStore(databaseUrl()).replace(unique);
+  revalidatePath("/settings");
+}
+
 async function addJobFeed(formData: FormData) {
   "use server";
 
@@ -73,10 +85,11 @@ async function saveJobFeed(formData: FormData) {
 export default async function SettingsPage() {
   await connection();
   const settingsStore = drizzleJobBoardSettingsStore(databaseUrl());
-  const [linkedIn, glassdoor, feeds] = await Promise.all([
+  const [linkedIn, glassdoor, feeds, excludedKeywords] = await Promise.all([
     settingsStore.get(linkedInJobBoard.source),
     settingsStore.get(glassdoorJobBoard.source),
     drizzleJobFeedStore(databaseUrl()).list(),
+    drizzleExcludedKeywordStore(databaseUrl()).list(),
   ]);
   const linkedInSearches = linkedIn?.searches.map(({ keywords, location }) => `${keywords} ${SEPARATOR} ${location}`);
   const glassdoorSearch = glassdoor?.searches[0];
@@ -145,6 +158,18 @@ export default async function SettingsPage() {
       <form action={addJobFeed}>
         <input name="url" type="url" size={60} placeholder="https://example.com/jobs?q=engineer" required />{" "}
         <button type="submit">Add Job Feed</button>
+      </form>
+
+      <h2>Excluded Keywords</h2>
+      <p>A Job whose title contains any of these words or phrases, ignoring case, is skipped.</p>
+      <form action={saveExcludedKeywords}>
+        <input
+          name="keywords"
+          size={60}
+          placeholder="senior, lead, manager"
+          defaultValue={excludedKeywords.join(", ")}
+        />{" "}
+        <button type="submit">Save</button>
       </form>
     </main>
   );

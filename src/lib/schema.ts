@@ -63,6 +63,11 @@ export const jobBoardSettings = pgTable("job_board_settings", {
   searches: jsonb().$type<JobSearch[]>().notNull().default([]),
 }).enableRLS();
 
+/** A word or phrase that, found in a Job's title, keeps the Job from being saved. */
+export const excludedKeywords = pgTable("excluded_keywords", {
+  keyword: text().primaryKey(),
+}).enableRLS();
+
 /** A rate-limited or out-of-credit Apify token, and when it can be used again. */
 export const skippedApifyTokens = pgTable("skipped_apify_tokens", {
   token: text().primaryKey(),

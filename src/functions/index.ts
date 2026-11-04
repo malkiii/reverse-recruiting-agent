@@ -1,6 +1,7 @@
 import { setTimeout } from "node:timers/promises";
 import {
   drizzleActorRunStore,
+  drizzleExcludedKeywordStore,
   drizzleFunctionRunStore,
   drizzleJobBoardSettingsStore,
   drizzleJobFeedStore,
@@ -43,6 +44,7 @@ export function functionServices() {
     sleep: async (ms: number) => void (await setTimeout(ms)),
     jobBoards: [linkedInJobBoard, glassdoorJobBoard],
     jobBoardSettings: drizzleJobBoardSettingsStore(DATABASE_URL),
+    excludedKeywords: drizzleExcludedKeywordStore(DATABASE_URL),
     actorRuns: drizzleActorRunStore(DATABASE_URL),
     jobs: drizzleJobStore(DATABASE_URL),
     jobFeeds: drizzleJobFeedStore(DATABASE_URL),
