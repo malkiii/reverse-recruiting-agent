@@ -4,6 +4,7 @@ import { prepare, runPreparation } from "../lib/application-lifecycle";
 import {
   drizzleActorRunStore,
   drizzleApplicationStore,
+  drizzleCompanyStore,
   drizzleLlmSettingsStore,
   drizzleResumeFolderStore,
   drizzleExcludedKeywordStore,
@@ -15,6 +16,7 @@ import {
   drizzleSkippedApifyTokenStore,
 } from "../lib/drizzle";
 import { parseFunctionsEnv } from "../lib/env";
+import { firecrawlCompanyPageSearch } from "../lib/firecrawl-company-page";
 import { firecrawlJobFeedReader } from "../lib/firecrawl-job-feed";
 import { firecrawlJobPageReader } from "../lib/firecrawl-job-page";
 import { googleDrive, googleOAuth } from "../lib/google";
@@ -108,6 +110,8 @@ export function functionServices() {
     googleAccessToken: accessToken,
     applications: drizzleApplicationStore(DATABASE_URL),
     jobPages: firecrawlJobPageReader(FIRECRAWL_API_KEY),
+    companies: drizzleCompanyStore(DATABASE_URL),
+    companyPageSearch: firecrawlCompanyPageSearch(FIRECRAWL_API_KEY),
     resumeFolder: drizzleResumeFolderStore(DATABASE_URL),
     drive: async () => googleDrive(await accessToken()),
     llm: async () => llmGateway(await llmSettings.get(), llmApiKeys),

@@ -10,6 +10,7 @@ const STEP_NAMES: Record<PrepareStep, string> = {
   "read-job": "Reading the Job page",
   "choose-resume": "Choosing a Resume",
   "find-company-page": "Finding the Company's LinkedIn page",
+  "find-decision-makers": "Finding Decision Makers",
 };
 
 export default async function ApplicationPage({ params }: { params: Promise<{ id: string }> }) {

@@ -20,7 +20,7 @@ export const APPLICATION_STATUSES = [
 ] as const;
 
 /** The Prepare steps, in order. A step is current until it finishes. */
-export const PREPARE_STEPS = ["read-job", "choose-resume", "find-company-page"] as const;
+export const PREPARE_STEPS = ["read-job", "choose-resume", "find-company-page", "find-decision-makers"] as const;
 
 export type JobSearch = { keywords: string; location: string };
 
@@ -131,6 +131,13 @@ export const settings = pgTable(
   singleRow,
 ).enableRLS();
 
+/** The employer behind a Job, identified by its LinkedIn page. */
+export const companies = pgTable("companies", {
+  id: bigint({ mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+  linkedinUrl: text("linkedin_url").notNull().unique(),
+  name: text().notNull(),
+}).enableRLS();
+
 /** At most one per Job, so a double click on Prepare claims only one, and a cancelled Job can't be Prepared again. */
 export const applications = pgTable("applications", {
   id: bigint({ mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
@@ -150,5 +157,6 @@ export const applications = pgTable("applications", {
   resumeFileId: text("resume_file_id"),
   resumeName: text("resume_name"),
   resumeLink: text("resume_link"),
+  companyId: bigint("company_id", { mode: "number" }).references(() => companies.id),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
 }).enableRLS();

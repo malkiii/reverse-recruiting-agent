@@ -3,6 +3,8 @@ import type {
   Application,
   ApplicationStatus,
   ApplicationStore,
+  CompanyPageSearch,
+  CompanyStore,
   DriveFile,
   DriveGateway,
   JobPageReader,
@@ -25,6 +27,8 @@ export type PrepareDeps = ClaimDeps & {
   drive: () => Promise<DriveGateway>;
   /** The LLM the Admin chose in settings. */
   llm: () => Promise<LlmGateway>;
+  companies: CompanyStore;
+  companyPageSearch: CompanyPageSearch;
 };
 
 /** The Admin's Prepare: atomically claims the Job's one Application. Null when the Job is unknown or already has one. */
@@ -72,10 +76,15 @@ async function listResumes(deps: PrepareDeps) {
 }
 
 /**
- * The Job page as markdown. When it can't be read, a Job Board Job falls back to its collected description,
- * and a Feed Job ends as Direct Apply.
+ * The Job's content. A Job Board Job uses its collected description, as its actor already extracted it.
+ * A Feed Job has none, so its Job page is read as markdown. Either ends as Direct Apply when there's nothing to read.
  */
 async function readJob(deps: PrepareDeps, job: SavedJob) {
+  if (!job.source.startsWith(FEED_SOURCE_PREFIX)) {
+    const description = job.description?.trim();
+    if (!description) throw new Stop("The Job has no description, so apply through the Job link", "direct-apply");
+    return description;
+  }
   try {
     const page = (await deps.jobPages.read(job.url)).trim();
     if (page) return page;
@@ -83,9 +92,7 @@ async function readJob(deps: PrepareDeps, job: SavedJob) {
   } catch (error) {
     console.warn(`Job page ${job.url}: couldn't be read:`, error);
   }
-  const description = job.source.startsWith(FEED_SOURCE_PREFIX) ? null : job.description?.trim();
-  if (!description) throw new Stop("The Job page couldn't be read, so apply through the Job link", "direct-apply");
-  return description;
+  throw new Stop("The Job page couldn't be read, so apply through the Job link", "direct-apply");
 }
 
 /** LLM request 1: the Job page and the Resume filenames, for industry keywords, Job location, Resume and Job Summary. */
@@ -116,22 +123,73 @@ async function chooseResume(deps: PrepareDeps, job: SavedJob, jobPage: string, r
   };
 }
 
+const COMPANY_SUFFIXES = /\b(corporation|limited|corp|gmbh|inc|llc|ltd|plc|co)\b/g;
+
+/** A Company name for matching: lowercased, without "| LinkedIn", punctuation or suffixes such as Inc, LLC and Ltd. */
+const matchableName = (name: string) =>
+  name
+    .toLowerCase()
+    .replace("| linkedin", " ")
+    .replace(/[^\p{L}\p{N}\s&]/gu, " ")
+    .replace(COMPANY_SUFFIXES, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+/** Whether a search result's title names the Company: one name contains the other. */
+function namesMatch(companyName: string, title: string) {
+  const company = matchableName(companyName);
+  const found = matchableName(title);
+  return company !== "" && found !== "" && (company.includes(found) || found.includes(company));
+}
+
+type CompanySearchDetails = Pick<Application, "industryKeywords" | "jobLocation">;
+
+/**
+ * The Company's LinkedIn page: the one saved on the Job, otherwise a search's first result when its title matches.
+ * Ends as Direct Apply when the page can't be confirmed. Returns the Company's ID.
+ */
+async function findCompany(deps: PrepareDeps, job: SavedJob, { industryKeywords, jobLocation }: CompanySearchDetails) {
+  let linkedinUrl = job.companyLinkedinUrl;
+  if (!linkedinUrl) {
+    const where = jobLocation ? ["in", jobLocation] : [];
+    const query = [job.companyName, ...(industryKeywords ?? []), ...where, "site:linkedin.com/company"].join(" ");
+    const result = await deps.companyPageSearch.firstResult(query);
+    if (!result || !namesMatch(job.companyName, result.title)) {
+      console.log(`Company page search "${query}": no match in ${JSON.stringify(result)}`);
+      throw new Stop("The Company's LinkedIn page couldn't be confirmed, so apply through the Job link", "direct-apply");
+    }
+    linkedinUrl = result.url;
+  }
+  return deps.companies.findOrCreate({ name: job.companyName, linkedinUrl });
+}
+
 async function runSteps(deps: PrepareDeps, application: Application) {
   const { id } = application;
   const job = await deps.jobs.get(application.jobId);
   if (!job) throw new Error(`No Job ${application.jobId} for Application ${id}`);
-  const resumes = await listResumes(deps);
+  let { currentStep: step, jobPage } = application;
+  let details: CompanySearchDetails = application;
 
-  let { jobPage } = application;
-  if (application.currentStep === "read-job" || !jobPage) {
-    jobPage = await readJob(deps, job);
-    await deps.applications.update(id, { jobPage, currentStep: "choose-resume" });
-    console.log(`Application ${id}: read the Job page`);
+  if (step === "read-job" || step === "choose-resume") {
+    const resumes = await listResumes(deps);
+    if (step === "read-job" || !jobPage) {
+      jobPage = await readJob(deps, job);
+      await deps.applications.update(id, { jobPage, currentStep: "choose-resume" });
+      console.log(`Application ${id}: read the Job page`);
+    }
+    const chosen = await chooseResume(deps, job, jobPage, resumes);
+    details = chosen;
+    step = "find-company-page";
+    await deps.applications.update(id, { ...chosen, currentStep: step });
+    console.log(`Application ${id}: chose ${chosen.resumeName}`);
   }
 
-  const chosen = await chooseResume(deps, job, jobPage, resumes);
-  await deps.applications.update(id, { ...chosen, currentStep: "find-company-page" });
-  console.log(`Application ${id}: chose ${chosen.resumeName}`);
+  if (step === "find-company-page") {
+    const companyId = await findCompany(deps, job, details);
+    step = "find-decision-makers";
+    await deps.applications.update(id, { companyId, currentStep: step });
+    console.log(`Application ${id}: found Company ${companyId}`);
+  }
 }
 
 /**

@@ -5,6 +5,8 @@ import type {
   ActorRun,
   ApplicationChanges,
   ApplicationStore,
+  Company,
+  CompanyStore,
   LlmChoice,
   LlmSettingsStore,
   ActorRunStore,
@@ -25,6 +27,7 @@ import type {
 import {
   actorRuns,
   applications,
+  companies,
   excludedKeywords,
   functionRuns,
   googleConnection,
@@ -325,6 +328,20 @@ export function drizzleApplicationStore(databaseUrl: string): ApplicationStore {
 
     async update(id: number, changes: ApplicationChanges) {
       await client(databaseUrl).update(applications).set(changes).where(eq(applications.id, id));
+    },
+  };
+}
+
+export function drizzleCompanyStore(databaseUrl: string): CompanyStore {
+  return {
+    async findOrCreate(company: Company) {
+      // The no-op update makes the insert return the saved Company's ID when its LinkedIn page is already saved.
+      const [saved] = await client(databaseUrl)
+        .insert(companies)
+        .values(company)
+        .onConflictDoUpdate({ target: companies.linkedinUrl, set: { linkedinUrl: company.linkedinUrl } })
+        .returning({ id: companies.id });
+      return saved.id;
     },
   };
 }

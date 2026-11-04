@@ -160,6 +160,20 @@ export interface JobPageReader {
   read(url: string): Promise<string>;
 }
 
+export type Company = { name: string; linkedinUrl: string };
+
+export interface CompanyStore {
+  /** The Company with this LinkedIn page, created when there's none yet. Returns its ID. */
+  findOrCreate(company: Company): Promise<number>;
+}
+
+export type SearchResult = { url: string; title: string };
+
+export interface CompanyPageSearch {
+  /** The web search's first result only. Null when there's none. Throws when the search fails. */
+  firstResult(query: string): Promise<SearchResult | null>;
+}
+
 export type LlmChoice = { provider: LlmProvider; model: string };
 
 export interface LlmSettingsStore {

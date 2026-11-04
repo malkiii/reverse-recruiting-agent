@@ -15,7 +15,7 @@ Copy `.env.example` to `.env.local`. The dashboard and Functions each validate o
 | `GOOGLE_CLIENT_ID`   | Dashboard, Functions | Google OAuth client, for Gmail and Drive          |
 | `GOOGLE_CLIENT_SECRET` | Dashboard, Functions | Google OAuth client secret                      |
 | `APIFY_TOKENS`       | Functions            | Comma-separated Apify tokens, used round-robin    |
-| `FIRECRAWL_API_KEY`  | Functions            | Firecrawl key, used to read Job Feeds             |
+| `FIRECRAWL_API_KEY`  | Functions            | Firecrawl key: Job Feeds, Job pages, Company pages |
 | `TELEGRAM_BOT_TOKEN` | Functions            | Telegram bot that sends Failure Alerts            |
 | `TELEGRAM_CHAT_ID`   | Functions            | The Admin's Telegram chat                         |
 | `DASHBOARD_URL`      | Functions            | Public dashboard URL, linked from Failure Alerts  |

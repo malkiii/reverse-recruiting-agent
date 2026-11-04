@@ -57,6 +57,13 @@
       "when": 1793817044376,
       "tag": "0007_prepare_applications",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793829329989,
+      "tag": "0008_company_pages",
+      "breakpoints": true
     }
   ]
 }

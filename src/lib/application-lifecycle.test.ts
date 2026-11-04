@@ -2,6 +2,8 @@ import { expect, test } from "vitest";
 import { prepare, runPreparation } from "./application-lifecycle";
 import {
   FakeApplicationStore,
+  FakeCompanyPageSearch,
+  FakeCompanyStore,
   FakeDrive,
   FakeJobPages,
   FakeJobStore,
@@ -38,16 +40,23 @@ const pdf = (name: string) => ({
   webViewLink: `https://drive.google.com/file/${name}`,
 });
 
+const acmeQuery = "Acme software fintech in Berlin, Germany site:linkedin.com/company";
+const acmePage = { url: "https://www.linkedin.com/company/acme-corp", title: "ACME, Inc. | LinkedIn" };
+
 async function setup() {
   const jobs = new FakeJobStore();
   await jobs.save([linkedInJob, feedJob]);
   const drive = new FakeDrive();
   drive.files.set("folder", [pdf("Backend Engineer Resume.pdf"), pdf("Data Analyst CV.pdf"), pdf("Notes.pdf")]);
   const llm = new FakeLlm();
+  const companyPageSearch = new FakeCompanyPageSearch();
+  companyPageSearch.results.set(acmeQuery, acmePage);
   return {
     jobs,
     applications: new FakeApplicationStore(),
     jobPages: new FakeJobPages(),
+    companies: new FakeCompanyStore(),
+    companyPageSearch,
     resumeFolder: new FakeResumeFolderStore({ id: "folder", name: "Resumes" }),
     drive: async () => drive,
     llm: async () => llm,
@@ -74,9 +83,8 @@ const answer = {
   jobSummary: "Acme needs a backend engineer to build payment APIs in Go.",
 };
 
-test("Prepare reads the Job page and saves the Resume and Job Summary the LLM chose", async () => {
+test("Prepare uses a Job Board Job's collected description and saves the Resume and Job Summary the LLM chose", async () => {
   const deps = await setup();
-  deps.jobPages.pages.set(linkedInJob.url, "# Backend Engineer\nBuild payment APIs in Go.");
   deps.fakeLlm.answers.push(answer);
   const id = (await prepare(deps, 1))!;
 
@@ -84,9 +92,9 @@ test("Prepare reads the Job page and saves the Resume and Job Summary the LLM ch
 
   expect(await deps.applications.get(id)).toMatchObject({
     status: "preparing",
-    currentStep: "find-company-page",
+    currentStep: "find-decision-makers",
     error: null,
-    jobPage: "# Backend Engineer\nBuild payment APIs in Go.",
+    jobPage: "Collected description: build APIs in Go",
     industryKeywords: ["software", "fintech"],
     jobLocation: "Berlin, Germany",
     jobSummary: "Acme needs a backend engineer to build payment APIs in Go.",
@@ -94,14 +102,15 @@ test("Prepare reads the Job page and saves the Resume and Job Summary the LLM ch
     resumeName: "Backend Engineer Resume.pdf",
     resumeLink: "https://drive.google.com/file/Backend Engineer Resume.pdf",
   });
+  expect(deps.jobPages.urlsRead).toEqual([]);
 });
 
 test("the LLM gets the Job page and only the Resume filenames, each wrapped in XML tags", async () => {
   const deps = await setup();
-  deps.jobPages.pages.set(linkedInJob.url, "Build payment APIs in Go.");
+  deps.jobPages.pages.set(feedJob.url, "Build payment APIs in Go.");
   deps.fakeLlm.answers.push(answer);
 
-  await runPreparation(deps, (await prepare(deps, 1))!);
+  await runPreparation(deps, (await prepare(deps, 2))!);
 
   const [{ prompt }] = deps.fakeLlm.requests;
   expect(prompt).toContain("<job_page>\nBuild payment APIs in Go.\n</job_page>");
@@ -110,19 +119,37 @@ test("the LLM gets the Job page and only the Resume filenames, each wrapped in X
   expect(prompt).not.toContain("Notes.pdf");
 });
 
-test("a Job Board Job whose page can't be read falls back to its collected description", async () => {
+test("Prepare reads a Feed Job's page and saves it as the Job page", async () => {
   const deps = await setup();
-  deps.fakeLlm.answers.push(answer);
-  const id = (await prepare(deps, 1))!;
+  deps.jobPages.pages.set(feedJob.url, "# Data Analyst\nBuild dashboards.");
+  deps.fakeLlm.answers.push({ ...answer, resumeFilename: "Data Analyst CV.pdf" });
+  const id = (await prepare(deps, 2))!;
 
   await runPreparation(deps, id);
 
   expect(await deps.applications.get(id)).toMatchObject({
     status: "preparing",
-    currentStep: "find-company-page",
-    jobPage: "Collected description: build APIs in Go",
+    currentStep: "find-decision-makers",
+    jobPage: "# Data Analyst\nBuild dashboards.",
+    resumeName: "Data Analyst CV.pdf",
   });
-  expect(deps.fakeLlm.requests[0].prompt).toContain("Collected description: build APIs in Go");
+  expect(deps.jobPages.urlsRead).toEqual([feedJob.url]);
+});
+
+test("a Job Board Job with no description ends as Direct Apply without reading its page or asking the LLM", async () => {
+  const deps = await setup();
+  await deps.jobs.save([{ ...linkedInJob, title: "Frontend Engineer", url: "https://www.linkedin.com/jobs/view/3", description: "  " }]);
+  const id = (await prepare(deps, 3))!;
+
+  await runPreparation(deps, id);
+
+  expect(await deps.applications.get(id)).toMatchObject({
+    status: "direct-apply",
+    error: "The Job has no description, so apply through the Job link",
+    jobPage: null,
+  });
+  expect(deps.jobPages.urlsRead).toEqual([]);
+  expect(deps.fakeLlm.requests).toEqual([]);
 });
 
 test("a Feed Job whose page can't be read ends as Direct Apply without asking the LLM", async () => {
@@ -137,7 +164,6 @@ test("a Feed Job whose page can't be read ends as Direct Apply without asking th
 
 test("the Application stops when the LLM returns a filename that isn't a listed Resume", async () => {
   const deps = await setup();
-  deps.jobPages.pages.set(linkedInJob.url, "Build payment APIs in Go.");
   deps.fakeLlm.answers.push({ ...answer, resumeFilename: "Notes.pdf" });
   const id = (await prepare(deps, 1))!;
 
@@ -154,8 +180,8 @@ test("the Application stops when the LLM returns a filename that isn't a listed 
 test("the Application stops before reading the Job page when the Resume Folder has no Resume", async () => {
   const deps = await setup();
   deps.fakeDrive.files.set("folder", [pdf("Notes.pdf")]);
-  deps.jobPages.pages.set(linkedInJob.url, "Build payment APIs in Go.");
-  const id = (await prepare(deps, 1))!;
+  deps.jobPages.pages.set(feedJob.url, "Build dashboards.");
+  const id = (await prepare(deps, 2))!;
 
   await runPreparation(deps, id);
 
@@ -180,9 +206,8 @@ test("the Application stops when no Resume Folder is chosen", async () => {
   });
 });
 
-test("an LLM error marks the Application failed, keeps the Job page read, and fails the Function", async () => {
+test("an LLM error marks the Application failed, keeps the Job page, and fails the Function", async () => {
   const deps = await setup();
-  deps.jobPages.pages.set(linkedInJob.url, "Build payment APIs in Go.");
   const id = (await prepare(deps, 1))!;
 
   await expect(runPreparation(deps, id)).rejects.toThrow("The LLM has no answer queued");
@@ -190,7 +215,112 @@ test("an LLM error marks the Application failed, keeps the Job page read, and fa
   expect(await deps.applications.get(id)).toMatchObject({
     status: "failed",
     currentStep: "choose-resume",
-    jobPage: "Build payment APIs in Go.",
+    jobPage: "Collected description: build APIs in Go",
     error: "The LLM has no answer queued",
   });
+});
+
+test("a Job with a saved Company LinkedIn page uses it without searching", async () => {
+  const deps = await setup();
+  await deps.jobs.save([
+    { ...linkedInJob, title: "Platform Engineer", url: "https://www.linkedin.com/jobs/view/3", companyLinkedinUrl: "https://www.linkedin.com/company/acme" },
+  ]);
+  deps.fakeLlm.answers.push(answer);
+  const id = (await prepare(deps, 3))!;
+
+  await runPreparation(deps, id);
+
+  expect(deps.companyPageSearch.queries).toEqual([]);
+  expect(deps.companies.companies).toEqual([{ id: 1, name: "Acme", linkedinUrl: "https://www.linkedin.com/company/acme" }]);
+  expect(await deps.applications.get(id)).toMatchObject({
+    status: "preparing",
+    currentStep: "find-decision-makers",
+    companyId: 1,
+  });
+});
+
+test("Prepare searches for the Company's LinkedIn page and accepts a first result whose name matches", async () => {
+  const deps = await setup();
+  deps.fakeLlm.answers.push(answer);
+  const id = (await prepare(deps, 1))!;
+
+  await runPreparation(deps, id);
+
+  expect(deps.companyPageSearch.queries).toEqual([acmeQuery]);
+  expect(deps.companies.companies).toEqual([{ id: 1, name: "Acme", linkedinUrl: acmePage.url }]);
+  expect(await deps.applications.get(id)).toMatchObject({ status: "preparing", companyId: 1 });
+});
+
+test("a first search result for another Company ends the Application as Direct Apply, keeping the chosen Resume", async () => {
+  const deps = await setup();
+  deps.companyPageSearch.results.set(acmeQuery, { url: "https://www.linkedin.com/company/globex", title: "Globex LLC | LinkedIn" });
+  deps.fakeLlm.answers.push(answer);
+  const id = (await prepare(deps, 1))!;
+
+  await runPreparation(deps, id);
+
+  expect(await deps.applications.get(id)).toMatchObject({
+    status: "direct-apply",
+    currentStep: "find-company-page",
+    error: "The Company's LinkedIn page couldn't be confirmed, so apply through the Job link",
+    resumeName: "Backend Engineer Resume.pdf",
+    companyId: null,
+  });
+  expect(deps.companies.companies).toEqual([]);
+});
+
+test("no search result ends the Application as Direct Apply", async () => {
+  const deps = await setup();
+  deps.companyPageSearch.results.clear();
+  deps.fakeLlm.answers.push(answer);
+  const id = (await prepare(deps, 1))!;
+
+  await runPreparation(deps, id);
+
+  expect(await deps.applications.get(id)).toMatchObject({ status: "direct-apply", companyId: null });
+});
+
+test("a Retry from the Company page step searches again without reading the Job or asking the LLM", async () => {
+  const deps = await setup();
+  deps.companyPageSearch.results.clear();
+  deps.fakeLlm.answers.push(answer);
+  const id = (await prepare(deps, 1))!;
+  await runPreparation(deps, id);
+  await deps.applications.update(id, { status: "preparing", error: null });
+  deps.companyPageSearch.results.set(acmeQuery, acmePage);
+
+  await runPreparation(deps, id);
+
+  expect(deps.fakeLlm.requests).toHaveLength(1);
+  expect(await deps.applications.get(id)).toMatchObject({ currentStep: "find-decision-makers", companyId: 1 });
+});
+
+test("company suffixes are removed only as whole words, so a name inside another Company's name doesn't match", async () => {
+  const deps = await setup();
+  await deps.jobs.save([{ ...linkedInJob, title: "ML Engineer", companyName: "Cohere", url: "https://www.linkedin.com/jobs/view/4" }]);
+  deps.companyPageSearch.results.set("Cohere software fintech in Berlin, Germany site:linkedin.com/company", {
+    url: "https://www.linkedin.com/company/here",
+    title: "HERE Technologies | LinkedIn",
+  });
+  deps.fakeLlm.answers.push(answer);
+  const id = (await prepare(deps, 3))!;
+
+  await runPreparation(deps, id);
+
+  expect(await deps.applications.get(id)).toMatchObject({ status: "direct-apply", companyId: null });
+});
+
+test("the match ignores company suffixes such as Inc and Ltd", async () => {
+  const deps = await setup();
+  await deps.jobs.save([{ ...linkedInJob, title: "SRE", companyName: "Initech Inc", url: "https://www.linkedin.com/jobs/view/4" }]);
+  deps.companyPageSearch.results.set("Initech Inc software fintech in Berlin, Germany site:linkedin.com/company", {
+    url: "https://www.linkedin.com/company/initech",
+    title: "Initech Ltd | LinkedIn",
+  });
+  deps.fakeLlm.answers.push(answer);
+  const id = (await prepare(deps, 3))!;
+
+  await runPreparation(deps, id);
+
+  expect(await deps.applications.get(id)).toMatchObject({ status: "preparing", companyId: 1 });
 });

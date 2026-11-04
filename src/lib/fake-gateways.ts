@@ -3,6 +3,9 @@ import type {
   Application,
   ApplicationChanges,
   ApplicationStore,
+  Company,
+  CompanyPageSearch,
+  CompanyStore,
   DriveFile,
   DriveFolder,
   DriveGateway,
@@ -12,6 +15,7 @@ import type {
   LlmRequest,
   LlmSettingsStore,
   ResumeFolderStore,
+  SearchResult,
   ActorRunStatus,
   ActorRunStore,
   AlertState,
@@ -322,6 +326,7 @@ export class FakeApplicationStore implements ApplicationStore {
       resumeFileId: null,
       resumeName: null,
       resumeLink: null,
+      companyId: null,
       createdAt,
     });
     return id;
@@ -407,5 +412,28 @@ export class FakeLlm implements LlmGateway {
     this.requests.push(request);
     if (this.answers.length === 0) throw new Error("The LLM has no answer queued");
     return request.schema.parse(this.answers.shift());
+  }
+}
+
+export class FakeCompanyStore implements CompanyStore {
+  companies: (Company & { id: number })[] = [];
+
+  async findOrCreate(company: Company) {
+    const saved = this.companies.find(({ linkedinUrl }) => linkedinUrl === company.linkedinUrl);
+    if (saved) return saved.id;
+    const id = this.companies.length + 1;
+    this.companies.push({ ...company, id });
+    return id;
+  }
+}
+
+/** Returns the first result set for each query, and none for any other. */
+export class FakeCompanyPageSearch implements CompanyPageSearch {
+  results = new Map<string, SearchResult>();
+  queries: string[] = [];
+
+  async firstResult(query: string) {
+    this.queries.push(query);
+    return this.results.get(query) ?? null;
   }
 }
