@@ -12,7 +12,7 @@ const DAYS_OLD = 1;
 const itemSchema = z.object({
   url: z.string(),
   title: z.string(),
-  employer: z.object({ name: z.string() }),
+  employer: z.object({ name: z.string(), logoUrl: z.string().nullish() }),
   location: z.object({ name: z.string().nullish() }).nullish(),
   ageInDays: z.number(),
   description: z.string().nullish(),
@@ -40,6 +40,7 @@ export const glassdoorJobBoard: JobBoardGateway = {
       // Glassdoor gives the description as HTML.
       description: description ? NodeHtmlMarkdown.translate(description) : null,
       companyLinkedinUrl: null,
+      companyLogoUrl: employer.logoUrl || null,
     }));
   },
 };

@@ -9,7 +9,8 @@ const PROMPT =
   "Extract every job listed on this page. Use the link to each job's own page as its url. " +
   // Only a written date: a relative age such as "3 days ago" would make the model guess today's date.
   "Give postedDate as YYYY-MM-DD only when the page shows the full date the job was posted. " +
-  "Leave it empty for relative ages such as '3 days ago' or when no date is shown.";
+  "Leave it empty for relative ages such as '3 days ago' or when no date is shown. " +
+  "Give companyLogoUrl only when the page shows the company's logo image for the job.";
 
 const JOBS_SCHEMA = {
   type: "object",
@@ -24,6 +25,7 @@ const JOBS_SCHEMA = {
           location: { type: "string" },
           url: { type: "string" },
           postedDate: { type: "string" },
+          companyLogoUrl: { type: "string" },
         },
         required: ["title", "company", "url"],
       },
@@ -38,12 +40,15 @@ const itemSchema = z.object({
   location: z.string().nullish(),
   url: z.string().min(1),
   postedDate: z.string().nullish(),
+  companyLogoUrl: z.string().nullish(),
 });
 
 const responseSchema = z.object({ data: z.object({ json: z.object({ jobs: z.array(z.unknown()) }) }) });
 
+export const FEED_SOURCE_PREFIX = "Feed: ";
+
 /** Labels a Job from a Job Feed by the Job Feed's host, such as "Feed: weworkremotely.com". */
-const feedSource = (feedUrl: string) => `Feed: ${new URL(feedUrl).hostname.replace(/^www\./, "")}`;
+const feedSource = (feedUrl: string) => `${FEED_SOURCE_PREFIX}${new URL(feedUrl).hostname.replace(/^www\./, "")}`;
 
 export function firecrawlJobFeedReader(apiKey: string): JobFeedReader {
   return {
@@ -70,7 +75,7 @@ export function firecrawlJobFeedReader(apiKey: string): JobFeedReader {
           console.warn(`Skipped a malformed Job from Job Feed ${feedUrl}`);
           return [];
         }
-        const { title, company, location, url, postedDate } = parsed.data;
+        const { title, company, location, url, postedDate, companyLogoUrl } = parsed.data;
         return [
           {
             source,
@@ -81,6 +86,7 @@ export function firecrawlJobFeedReader(apiKey: string): JobFeedReader {
             postDay: postedDate && ISO_DAY.test(postedDate) ? postedDate : null,
             description: null,
             companyLinkedinUrl: null,
+            companyLogoUrl: companyLogoUrl && URL.canParse(companyLogoUrl, feedUrl) ? new URL(companyLogoUrl, feedUrl).href : null,
           },
         ];
       });

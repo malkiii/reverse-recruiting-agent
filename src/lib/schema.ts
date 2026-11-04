@@ -35,6 +35,7 @@ export const jobs = pgTable(
     postDay: date("post_day", { mode: "string" }).notNull(),
     description: text(),
     companyLinkedinUrl: text("company_linkedin_url"),
+    companyLogoUrl: text("company_logo_url"),
     // Jobs that existed at go-live, or that older code saves, are dashboard-only. Job Collection saves new Jobs as pending.
     alertState: text("alert_state", { enum: ["pending", "sent", "dashboard-only"] })
       .notNull()

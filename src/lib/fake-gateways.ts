@@ -7,6 +7,8 @@ import type {
   FunctionRun,
   FunctionRunResult,
   FunctionRunStore,
+  Image,
+  ImageGateway,
   Job,
   JobBoardGateway,
   JobBoardSettings,
@@ -15,6 +17,7 @@ import type {
   JobFeedReader,
   JobFeedStore,
   JobStore,
+  PlaceholderName,
   SkippedApifyTokenStore,
   TelegramGateway,
   TelegramLink,
@@ -50,7 +53,7 @@ export class FakeFunctionRunStore implements FunctionRunStore {
 }
 
 export class FakeTelegram implements TelegramGateway {
-  messages: { text: string; link?: TelegramLink }[] = [];
+  messages: { text: string; link?: TelegramLink; html?: true; photo?: Image }[] = [];
   failing = false;
 
   get sent() {
@@ -60,6 +63,30 @@ export class FakeTelegram implements TelegramGateway {
   async send(text: string, link?: TelegramLink) {
     if (this.failing) throw new Error("Telegram is down");
     this.messages.push(link ? { text, link } : { text });
+  }
+
+  async sendHtml(html: string, link: TelegramLink, photo?: Image) {
+    if (this.failing) throw new Error("Telegram is down");
+    this.messages.push(photo ? { text: html, link, html: true, photo } : { text: html, link, html: true });
+  }
+}
+
+/** Serves the images, OG image URLs and placeholders set here. Anything else is null. */
+export class FakeImages implements ImageGateway {
+  images = new Map<string, Image>();
+  pageImages = new Map<string, string>();
+  placeholders = new Map<PlaceholderName, Image>();
+
+  async download(url: string) {
+    return this.images.get(url) ?? null;
+  }
+
+  async pageImageUrl(pageUrl: string) {
+    return this.pageImages.get(pageUrl) ?? null;
+  }
+
+  async placeholder(name: PlaceholderName) {
+    return this.placeholders.get(name) ?? null;
   }
 }
 

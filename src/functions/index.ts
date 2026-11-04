@@ -10,6 +10,7 @@ import {
 import { parseFunctionsEnv } from "../lib/env";
 import { firecrawlJobFeedReader } from "../lib/firecrawl-job-feed";
 import { glassdoorJobBoard } from "../lib/glassdoor-job-board";
+import { webImageGateway } from "../lib/images";
 import { FUNCTION_TIME_LIMITS_MS } from "../lib/function-runs";
 import { runCollection } from "../lib/job-collection";
 import { linkedInJobBoard } from "../lib/linkedin-job-board";
@@ -49,6 +50,7 @@ export function functionServices() {
     apifyTokens: APIFY_TOKENS,
     skippedApifyTokens: drizzleSkippedApifyTokenStore(DATABASE_URL),
     telegram: telegramGateway(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID),
+    images: webImageGateway(),
     dashboardUrl: DASHBOARD_URL,
   };
 }

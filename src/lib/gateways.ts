@@ -15,9 +15,25 @@ export interface FunctionRunStore {
 
 export type TelegramLink = { label: string; url: string };
 
+export type Image = { bytes: Uint8Array<ArrayBuffer>; type: string };
+
 export interface TelegramGateway {
-  /** Sends a message, with one URL button when a link is given. */
+  /** Sends a plain text message, with one URL button when a link is given. */
   send(text: string, link?: TelegramLink): Promise<void>;
+  /** Sends an HTML message with one URL button, as a photo's caption when a photo is given. */
+  sendHtml(html: string, link: TelegramLink, photo?: Image): Promise<void>;
+}
+
+export type PlaceholderName = "linkedin" | "glassdoor";
+
+/** Never throws: an image that can't be had is null. */
+export interface ImageGateway {
+  /** Null when the URL fails to fetch or isn't a photo Telegram takes. */
+  download(url: string): Promise<Image | null>;
+  /** The page's og:image URL. */
+  pageImageUrl(pageUrl: string): Promise<string | null>;
+  /** The placeholder image file for a source, null when it's missing. */
+  placeholder(name: PlaceholderName): Promise<Image | null>;
 }
 
 export type Job = Omit<typeof jobs.$inferSelect, "id" | "alertState">;

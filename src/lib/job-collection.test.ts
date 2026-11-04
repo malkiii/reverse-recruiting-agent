@@ -3,6 +3,7 @@ import { acceptFunctionRequest } from "../functions/accept-function-request";
 import {
   FakeActorRunStore,
   FakeFunctionRunStore,
+  FakeImages,
   FakeJobBoard,
   FakeJobBoardSettingsStore,
   FakeJobFeedReader,
@@ -27,6 +28,7 @@ const job = {
   postDay: "2026-11-01",
   description: "Build things",
   companyLinkedinUrl: "https://www.linkedin.com/company/acme",
+  companyLogoUrl: null as string | null,
 };
 
 const search = { keywords: "engineer", location: "Remote" };
@@ -47,6 +49,7 @@ function setup({ jobs = [job], enabled = true, searches = [search], apifyTokens 
       apifyTokens,
       skippedApifyTokens: new FakeSkippedApifyTokenStore(),
       telegram: new FakeTelegram(),
+      images: new FakeImages(),
       now: () => now,
       sleep: async (ms: number) => void delays.push(ms),
     },
@@ -318,6 +321,7 @@ const glassdoorJob = {
   url: "https://www.glassdoor.com/job-listing/j?jl=1",
   description: "<div>Build APIs</div>",
   companyLinkedinUrl: null,
+  companyLogoUrl: null as string | null,
 };
 
 test("a Glassdoor Job's post day is calculated from its age in days", async () => {
@@ -354,6 +358,7 @@ const feedJob = {
   url: "https://jobs.example.com/jobs/1",
   description: null,
   companyLinkedinUrl: null,
+  companyLogoUrl: null as string | null,
 };
 
 test("a Job Feed's Jobs are saved, and one with no post date counts as posted the day it was first seen", async () => {
@@ -420,16 +425,95 @@ test("a failing Glassdoor Job Board doesn't stop LinkedIn or the Job Feeds", asy
   expect(await deps.jobs.list()).toEqual([{ ...feedJob, postDay: "2026-11-01" }, job]);
 });
 
-test("each new Job is sent as its own Job Alert with a button to its page", async () => {
-  const other = { ...job, url: "https://www.linkedin.com/jobs/view/2", title: "Data Engineer" };
+const image = (name: string) => ({ bytes: new TextEncoder().encode(name), type: "image/png" });
+
+test("each new Job is sent as its own Job Alert, with the Company logo and a button to its page", async () => {
+  const logoUrl = "https://media.licdn.com/acme.png";
+  const other = { ...job, url: "https://www.linkedin.com/jobs/view/2", title: "R&D <Lead>", companyLogoUrl: logoUrl };
   const { deps } = setup({ jobs: [job, other] });
+  deps.images.images.set(logoUrl, image("acme"));
 
   await runCollection(deps);
 
+  const link = { label: "📄 See Details", url: job.url };
   expect(deps.telegram.messages).toEqual([
-    { text: "Software Engineer at Acme\nRemote · LinkedIn", link: { label: "Open Job", url: job.url } },
-    { text: "Data Engineer at Acme\nRemote · LinkedIn", link: { label: "Open Job", url: other.url } },
+    { text: "💼 <b>Software Engineer</b>\n\n🏢 Acme\n\n📍 Remote\n\n<i>(LinkedIn)</i>", link, html: true },
+    {
+      text: "💼 <b>R&amp;D &lt;Lead&gt;</b>\n\n🏢 Acme\n\n📍 Remote\n\n<i>(LinkedIn)</i>",
+      link: { ...link, url: other.url },
+      html: true,
+      photo: image("acme"),
+    },
   ]);
+});
+
+test("a Job Alert whose logo fails to fetch shows its source's placeholder", async () => {
+  const { deps } = setup({ jobs: [{ ...job, companyLogoUrl: "https://media.licdn.com/broken.png" }] });
+  deps.images.placeholders.set("linkedin", image("linkedin"));
+  deps.images.placeholders.set("glassdoor", image("glassdoor"));
+
+  await runCollection(deps);
+
+  expect(deps.telegram.messages.map(({ photo }) => photo)).toEqual([image("linkedin")]);
+});
+
+test("a Job Alert whose photo Telegram refuses falls back to the next photo", async () => {
+  const logoUrl = "https://media.licdn.com/huge.png";
+  const { deps } = setup({ jobs: [{ ...job, companyLogoUrl: logoUrl }] });
+  deps.images.images.set(logoUrl, image("huge"));
+  deps.images.placeholders.set("linkedin", image("linkedin"));
+  const sendHtml = deps.telegram.sendHtml.bind(deps.telegram);
+  deps.telegram.sendHtml = async (html, link, photo) => {
+    if (photo && new TextDecoder().decode(photo.bytes) === "huge") throw new Error("Telegram refused the message: 400");
+    await sendHtml(html, link, photo);
+  };
+
+  await runCollection(deps);
+
+  expect(deps.telegram.messages.map(({ photo }) => photo)).toEqual([image("linkedin")]);
+});
+
+test("a Job Alert with no photo at all still goes out as text", async () => {
+  const { deps } = setup();
+
+  await runCollection(deps);
+
+  expect(deps.telegram.messages).toHaveLength(1);
+  expect(deps.telegram.messages[0].photo).toBeUndefined();
+});
+
+test("a Job Feed's Job with no logo shows its page's OG image, then the Job Feed placeholder", async () => {
+  const { deps } = setup({ jobs: [] });
+  await deps.jobFeeds.add(feedUrl);
+  const withOgImage = { ...feedJob, postDay: "2026-11-01" };
+  const withBrokenOgImage = { ...withOgImage, url: "https://jobs.example.com/jobs/2", title: "Other" };
+  deps.feedReader.jobs.set(feedUrl, [withOgImage, withBrokenOgImage]);
+  deps.images.pageImages.set(withOgImage.url, "https://jobs.example.com/og.png");
+  deps.images.pageImages.set(withBrokenOgImage.url, "https://jobs.example.com/broken.png");
+  deps.images.images.set("https://jobs.example.com/og.png", image("og"));
+  deps.images.images.set(
+    "https://placehold.co/800x400/EBEBEB/B5B5B5/png?text=jobs.example.com",
+    image("job-feed"),
+  );
+
+  await runCollection(deps);
+
+  expect(deps.telegram.messages.map(({ text, photo }) => [text.split("\n")[0], photo])).toEqual([
+    ["💼 <b>Platform Engineer</b>", image("og")],
+    ["💼 <b>Other</b>", image("job-feed")],
+  ]);
+});
+
+test("a Glassdoor Job Alert with no logo shows the Glassdoor placeholder", async () => {
+  const { deps } = setup({ jobs: [] });
+  deps.jobBoards.push(glassdoorBoard([{ ...glassdoorJob, ageInDays: 0 }]));
+  await deps.jobBoardSettings.save({ source: "Glassdoor", enabled: true, searches: [search] });
+  deps.images.placeholders.set("glassdoor", image("glassdoor"));
+  deps.images.placeholders.set("linkedin", image("linkedin"));
+
+  await runCollection(deps);
+
+  expect(deps.telegram.messages.map(({ photo }) => photo)).toEqual([image("glassdoor")]);
 });
 
 test("every new Job is alerted, however many a Job Collection saves", async () => {
@@ -484,10 +568,10 @@ test("pending Job Alerts from an earlier run are sent first", async () => {
 test("a Job Alert that fails to send doesn't stop the others", async () => {
   const other = { ...job, url: "https://www.linkedin.com/jobs/view/2", title: "Data Engineer" };
   const { deps } = setup({ jobs: [job, other] });
-  const send = deps.telegram.send.bind(deps.telegram);
-  deps.telegram.send = async (text, link) => {
-    if (link?.url === job.url) throw new Error("Telegram refused the message: 400");
-    await send(text, link);
+  const sendHtml = deps.telegram.sendHtml.bind(deps.telegram);
+  deps.telegram.sendHtml = async (html, link, photo) => {
+    if (link.url === job.url) throw new Error("Telegram refused the message: 400");
+    await sendHtml(html, link, photo);
   };
 
   await expect(runCollection(deps)).rejects.toThrow(/Telegram refused/);
@@ -508,6 +592,6 @@ test("when all Apify tokens are used up, the Job Collection fails and the Admin 
 
   expect(deps.telegram.sent).toEqual([
     "All Apify tokens are used up until the next UTC day. Top up a token to collect from Job Boards.",
-    "Platform Engineer at Initech\nRemote · Feed: jobs.example.com",
+    "💼 <b>Platform Engineer</b>\n\n🏢 Initech\n\n📍 Remote\n\n<i>(Feed: jobs.example.com)</i>",
   ]);
 });

@@ -4,6 +4,8 @@ import type {
   ActorRunStore,
   CollectedJob,
   FunctionRun,
+  Image,
+  ImageGateway,
   Job,
   JobBoardGateway,
   JobBoardSettingsStore,
@@ -11,9 +13,11 @@ import type {
   JobFeedStore,
   JobStore,
   PendingAlertJob,
+  PlaceholderName,
   SkippedApifyTokenStore,
   TelegramGateway,
 } from "./gateways";
+import { FEED_SOURCE_PREFIX } from "./firecrawl-job-feed";
 import { COLLECT_JOBS, type JobSearch } from "./schema";
 
 export const COLLECTION_TIME_LIMIT_MS = 30 * 60_000;
@@ -33,6 +37,7 @@ type CollectionDeps = {
   apifyTokens: string;
   skippedApifyTokens: SkippedApifyTokenStore;
   telegram: TelegramGateway;
+  images: ImageGateway;
   now: () => Date;
   sleep: (ms: number) => Promise<void>;
 };
@@ -193,8 +198,56 @@ export async function runCollection(deps: CollectionDeps) {
   if (errors.length > 0) throw new Error(errors.join("; "));
 }
 
-const jobAlertText = ({ title, companyName, location, source }: PendingAlertJob) =>
-  `${title} at ${companyName}\n${location} · ${source}`;
+const escapeHtml = (text: string) => text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+
+const jobAlertCaption = ({ title, companyName, location, source }: PendingAlertJob) =>
+  [
+    `💼 <b>${escapeHtml(title)}</b>`,
+    `🏢 ${escapeHtml(companyName)}`,
+    ...(location ? [`📍 ${escapeHtml(location)}`] : []),
+    `<i>(${escapeHtml(source)})</i>`,
+  ].join("\n\n");
+
+const isFeedJob = ({ source }: PendingAlertJob) => source.startsWith(FEED_SOURCE_PREFIX);
+
+const placeholderName = ({ source }: PendingAlertJob): PlaceholderName =>
+  source === "Glassdoor" ? "glassdoor" : "linkedin";
+
+/** A grey image naming the Job Feed's host. PNG, because placehold.co serves SVG by default and Telegram refuses it. */
+const feedPlaceholderUrl = ({ source }: PendingAlertJob) =>
+  `https://placehold.co/800x400/EBEBEB/B5B5B5/png?text=${encodeURIComponent(source.slice(FEED_SOURCE_PREFIX.length))}`;
+
+/** The Company logo, then a Job Feed page's OG image, then the source's placeholder, each tried in turn. */
+function alertPhotos({ images }: CollectionDeps, job: PendingAlertJob): (() => Promise<Image | null>)[] {
+  const { companyLogoUrl } = job;
+  const pageImage = async () => {
+    const url = await images.pageImageUrl(job.url);
+    return url ? images.download(url) : null;
+  };
+  return [
+    ...(companyLogoUrl ? [() => images.download(companyLogoUrl)] : []),
+    ...(isFeedJob(job)
+      ? [pageImage, () => images.download(feedPlaceholderUrl(job))]
+      : [() => images.placeholder(placeholderName(job))]),
+  ];
+}
+
+async function sendJobAlert(deps: CollectionDeps, job: PendingAlertJob) {
+  const caption = jobAlertCaption(job);
+  const link = { label: "📄 See Details", url: job.url };
+
+  for (const photo of alertPhotos(deps, job)) {
+    const image = await photo();
+    if (!image) continue;
+    try {
+      return await deps.telegram.sendHtml(caption, link, image);
+    } catch (error) {
+      console.warn(`Job Alert for ${job.url}: photo refused, trying the next one:`, error);
+    }
+  }
+  // No photo could be had, so the Job Alert still goes out as text.
+  await deps.telegram.sendHtml(caption, link);
+}
 
 async function sendJobAlerts(deps: CollectionDeps, errors: string[]) {
   const pending = await deps.jobs.listPendingAlerts();
@@ -202,7 +255,7 @@ async function sendJobAlerts(deps: CollectionDeps, errors: string[]) {
 
   for (const job of pending) {
     try {
-      await deps.telegram.send(jobAlertText(job), { label: "Open Job", url: job.url });
+      await sendJobAlert(deps, job);
     } catch (error) {
       // Left pending, so the next Job Collection retries it.
       console.error(`Job Alert for ${job.url}: failed:`, error);

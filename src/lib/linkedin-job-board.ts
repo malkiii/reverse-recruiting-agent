@@ -17,6 +17,7 @@ const itemSchema = z.object({
   posted_date: z.string(),
   job_description: z.string().nullish(),
   company_url: z.string().nullish(),
+  company_logo_url: z.string().nullish(),
 });
 
 export const linkedInJobBoard: JobBoardGateway = {
@@ -42,7 +43,7 @@ export const linkedInJobBoard: JobBoardGateway = {
     return actorRunJobs(
       run,
       itemSchema,
-      ({ job_url, job_title, company_name, location, posted_date, job_description, company_url }) => ({
+      ({ job_url, job_title, company_name, location, posted_date, job_description, company_url, company_logo_url }) => ({
         source: SOURCE,
         title: job_title,
         companyName: company_name,
@@ -51,6 +52,7 @@ export const linkedInJobBoard: JobBoardGateway = {
         postDay: posted_date.slice(0, 10),
         description: job_description ?? null,
         companyLinkedinUrl: company_url ?? null,
+        companyLogoUrl: company_logo_url || null,
       }),
     );
   },

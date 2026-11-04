@@ -29,6 +29,13 @@
       "when": 1793733257864,
       "tag": "0003_job_alerts_and_skipped_apify_tokens",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793795671225,
+      "tag": "0004_company_logos",
+      "breakpoints": true
     }
   ]
 }
