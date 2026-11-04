@@ -2,6 +2,25 @@ import { sql } from "drizzle-orm";
 import { bigint, boolean, check, date, integer, jsonb, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 
 export const COLLECT_JOBS = "collect-jobs";
+export const PREPARE_APPLICATION = "prepare-application";
+
+export const LLM_PROVIDERS = ["claude", "gemini", "openai", "groq"] as const;
+export type LlmProvider = (typeof LLM_PROVIDERS)[number];
+
+export const APPLICATION_STATUSES = [
+  "preparing",
+  "in-review",
+  "sending",
+  "sent",
+  "cancelled",
+  "direct-apply",
+  "no-contacts",
+  "all-in-cooldown",
+  "failed",
+] as const;
+
+/** The Prepare steps, in order. A step is current until it finishes. */
+export const PREPARE_STEPS = ["read-job", "choose-resume", "find-company-page"] as const;
 
 export type JobSearch = { keywords: string; location: string };
 
@@ -14,6 +33,8 @@ export const functionRuns = pgTable(
     startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
     finishedAt: timestamp("finished_at", { withTimezone: true }),
     error: text(),
+    /** The Application a prepare-application or send-application run served. */
+    applicationId: bigint("application_id", { mode: "number" }),
   },
   // At most one Job Collection is active across both environments.
   (table) => [
@@ -104,6 +125,30 @@ export const settings = pgTable(
     id: integer().primaryKey().default(1),
     resumeFolderId: text("resume_folder_id"),
     resumeFolderName: text("resume_folder_name"),
+    llmProvider: text("llm_provider", { enum: LLM_PROVIDERS }),
+    llmModel: text("llm_model"),
   },
   singleRow,
 ).enableRLS();
+
+/** At most one per Job, so a double click on Prepare claims only one, and a cancelled Job can't be Prepared again. */
+export const applications = pgTable("applications", {
+  id: bigint({ mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+  jobId: bigint("job_id", { mode: "number" })
+    .notNull()
+    .unique()
+    .references(() => jobs.id),
+  status: text({ enum: APPLICATION_STATUSES }).notNull(),
+  currentStep: text("current_step", { enum: PREPARE_STEPS }).notNull(),
+  /** Why the Application stopped, when it did. */
+  error: text(),
+  /** The Job page as markdown, kept so a Retry doesn't pay to read it again. */
+  jobPage: text("job_page"),
+  industryKeywords: jsonb("industry_keywords").$type<string[]>(),
+  jobLocation: text("job_location"),
+  jobSummary: text("job_summary"),
+  resumeFileId: text("resume_file_id"),
+  resumeName: text("resume_name"),
+  resumeLink: text("resume_link"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+}).enableRLS();

@@ -1,11 +1,17 @@
 import { revalidatePath } from "next/cache";
 import Link from "next/link";
 import { connection } from "next/server";
-import { drizzleExcludedKeywordStore, drizzleJobBoardSettingsStore, drizzleJobFeedStore } from "@/lib/drizzle";
+import {
+  drizzleExcludedKeywordStore,
+  drizzleJobBoardSettingsStore,
+  drizzleJobFeedStore,
+  drizzleLlmSettingsStore,
+} from "@/lib/drizzle";
 import { parseDashboardEnv } from "@/lib/env";
 import { glassdoorJobBoard } from "@/lib/glassdoor-job-board";
 import { linkedInJobBoard } from "@/lib/linkedin-job-board";
-import type { JobSearch } from "@/lib/schema";
+import { LLM_PROVIDER_NAMES, SUGGESTED_MODELS } from "@/lib/llm";
+import { LLM_PROVIDERS, type JobSearch, type LlmProvider } from "@/lib/schema";
 
 const SEPARATOR = "|";
 
@@ -82,14 +88,26 @@ async function saveJobFeed(formData: FormData) {
   revalidatePath("/settings");
 }
 
+async function saveLlm(formData: FormData) {
+  "use server";
+
+  const provider = String(formData.get("provider")) as LlmProvider;
+  if (!LLM_PROVIDERS.includes(provider)) throw new Error(`Unknown LLM provider: ${provider}`);
+  const model = String(formData.get("model")).trim();
+  if (!model) throw new Error("Choose a model");
+  await drizzleLlmSettingsStore(databaseUrl()).save({ provider, model });
+  revalidatePath("/settings");
+}
+
 export default async function SettingsPage() {
   await connection();
   const settingsStore = drizzleJobBoardSettingsStore(databaseUrl());
-  const [linkedIn, glassdoor, feeds, excludedKeywords] = await Promise.all([
+  const [linkedIn, glassdoor, feeds, excludedKeywords, llm] = await Promise.all([
     settingsStore.get(linkedInJobBoard.source),
     settingsStore.get(glassdoorJobBoard.source),
     drizzleJobFeedStore(databaseUrl()).list(),
     drizzleExcludedKeywordStore(databaseUrl()).list(),
+    drizzleLlmSettingsStore(databaseUrl()).get(),
   ]);
   const linkedInSearches = linkedIn?.searches.map(({ keywords, location }) => `${keywords} ${SEPARATOR} ${location}`);
   const glassdoorSearch = glassdoor?.searches[0];
@@ -159,6 +177,35 @@ export default async function SettingsPage() {
         <input name="url" type="url" size={60} placeholder="https://example.com/jobs?q=engineer" required />{" "}
         <button type="submit">Add Job Feed</button>
       </form>
+
+      <h2>LLM</h2>
+      <p>Used to choose a Resume and write the Cover Letter. The provider&apos;s API key must be set for Functions.</p>
+      <form action={saveLlm}>
+        <label>
+          Provider{" "}
+          <select name="provider" defaultValue={llm?.provider ?? "claude"} required>
+            {LLM_PROVIDERS.map((provider) => (
+              <option key={provider} value={provider}>
+                {LLM_PROVIDER_NAMES[provider]}
+              </option>
+            ))}
+          </select>
+        </label>{" "}
+        <label>
+          Model <input name="model" list="llm-models" size={30} defaultValue={llm?.model} required />
+        </label>
+        <datalist id="llm-models">
+          {LLM_PROVIDERS.flatMap((provider) =>
+            SUGGESTED_MODELS[provider].map((model) => (
+              <option key={model} value={model}>
+                {LLM_PROVIDER_NAMES[provider]}
+              </option>
+            )),
+          )}
+        </datalist>{" "}
+        <button type="submit">Save</button>
+      </form>
+      {!llm && <p role="alert">No LLM is chosen yet, so Prepare can&apos;t choose a Resume.</p>}
 
       <h2>Excluded Keywords</h2>
       <p>A Job whose title contains any of these words or phrases, ignoring case, is skipped.</p>

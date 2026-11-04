@@ -50,6 +50,13 @@
       "when": 1793809249831,
       "tag": "0006_google_connection_and_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793817044376,
+      "tag": "0007_prepare_applications",
+      "breakpoints": true
     }
   ]
 }

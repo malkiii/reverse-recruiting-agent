@@ -1,5 +1,17 @@
 import type {
   ActorRun,
+  Application,
+  ApplicationChanges,
+  ApplicationStore,
+  DriveFile,
+  DriveFolder,
+  DriveGateway,
+  JobPageReader,
+  LlmChoice,
+  LlmGateway,
+  LlmRequest,
+  LlmSettingsStore,
+  ResumeFolderStore,
   ActorRunStatus,
   ActorRunStore,
   AlertState,
@@ -32,7 +44,7 @@ import { COLLECT_JOBS, type JobSearch } from "./schema";
 export class FakeFunctionRunStore implements FunctionRunStore {
   private runs: FunctionRun[] = [];
 
-  async start(functionName: string, startedAt: Date, timeLimitMs: number) {
+  async start(functionName: string, startedAt: Date, timeLimitMs: number, applicationId?: number) {
     this.runs = this.runs.map((run) =>
       run.functionName === functionName &&
       run.status === "running" &&
@@ -44,7 +56,15 @@ export class FakeFunctionRunStore implements FunctionRunStore {
     if (functionName === COLLECT_JOBS && active) return null;
 
     const id = this.runs.length + 1;
-    this.runs.push({ id, functionName, status: "running", startedAt, finishedAt: null, error: null });
+    this.runs.push({
+      id,
+      functionName,
+      status: "running",
+      startedAt,
+      finishedAt: null,
+      error: null,
+      applicationId: applicationId ?? null,
+    });
     return id;
   }
 
@@ -115,6 +135,13 @@ export class FakeJobStore implements JobStore {
 
   async list(): Promise<Job[]> {
     return this.jobs.map(({ id: _id, alertState: _alertState, ...job }) => job);
+  }
+
+  async get(id: number) {
+    const saved = this.jobs.find((job) => job.id === id);
+    if (!saved) return undefined;
+    const { alertState: _, ...job } = saved;
+    return job;
   }
 
   async listPendingAlerts() {
@@ -273,5 +300,112 @@ export class FakeGoogleOAuth implements GoogleOAuthGateway {
   async refresh(refreshToken: string) {
     this.refreshed.push(refreshToken);
     return this.accepted.has(refreshToken) ? this.grant : null;
+  }
+}
+
+export class FakeApplicationStore implements ApplicationStore {
+  private applications: Application[] = [];
+
+  async claim(jobId: number, createdAt: Date) {
+    if (this.applications.some((application) => application.jobId === jobId)) return null;
+    const id = this.applications.length + 1;
+    this.applications.push({
+      id,
+      jobId,
+      status: "preparing",
+      currentStep: "read-job",
+      error: null,
+      jobPage: null,
+      industryKeywords: null,
+      jobLocation: null,
+      jobSummary: null,
+      resumeFileId: null,
+      resumeName: null,
+      resumeLink: null,
+      createdAt,
+    });
+    return id;
+  }
+
+  async get(id: number) {
+    return this.applications.find((application) => application.id === id);
+  }
+
+  async list() {
+    return this.applications;
+  }
+
+  async update(id: number, changes: ApplicationChanges) {
+    this.applications = this.applications.map((application) =>
+      application.id === id ? { ...application, ...changes } : application,
+    );
+  }
+}
+
+/** Returns the markdown set for each URL, and throws for any other. */
+export class FakeJobPages implements JobPageReader {
+  pages = new Map<string, string>();
+  urlsRead: string[] = [];
+
+  async read(url: string) {
+    this.urlsRead.push(url);
+    const page = this.pages.get(url);
+    if (page === undefined) throw new Error(`Firecrawl couldn't read ${url}`);
+    return page;
+  }
+}
+
+export class FakeResumeFolderStore implements ResumeFolderStore {
+  constructor(public folder?: DriveFolder) {}
+
+  async get() {
+    return this.folder;
+  }
+
+  async save(folder: DriveFolder) {
+    this.folder = folder;
+  }
+}
+
+/** One Drive: the folders, the files in each and the folders shared by link, as set here. */
+export class FakeDrive implements DriveGateway {
+  folders: DriveFolder[] = [];
+  files = new Map<string, DriveFile[]>();
+  sharedByLink = new Set<string>();
+
+  async listFolders() {
+    return this.folders;
+  }
+
+  async listFiles(folderId: string) {
+    return this.files.get(folderId) ?? [];
+  }
+
+  async isSharedByLink(folderId: string) {
+    return this.sharedByLink.has(folderId);
+  }
+}
+
+export class FakeLlmSettingsStore implements LlmSettingsStore {
+  constructor(public choice?: LlmChoice) {}
+
+  async get() {
+    return this.choice;
+  }
+
+  async save(choice: LlmChoice) {
+    this.choice = choice;
+  }
+}
+
+/** Answers each request with the next answer queued here, parsed with the request's schema. */
+export class FakeLlm implements LlmGateway {
+  requests: LlmRequest<unknown>[] = [];
+  answers: unknown[] = [];
+
+  async generate<T>(request: LlmRequest<T>) {
+    this.requests.push(request);
+    if (this.answers.length === 0) throw new Error("The LLM has no answer queued");
+    return request.schema.parse(this.answers.shift());
   }
 }

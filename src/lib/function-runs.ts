@@ -1,10 +1,12 @@
 import type { FunctionRun } from "./gateways";
+import { PREPARE_TIME_LIMIT_MS } from "./application-lifecycle";
 import { COLLECTION_TIME_LIMIT_MS } from "./job-collection";
-import { COLLECT_JOBS } from "./schema";
+import { COLLECT_JOBS, PREPARE_APPLICATION } from "./schema";
 
 export const FUNCTION_TIME_LIMITS_MS: Record<string, number> = {
   noop: 60_000,
   [COLLECT_JOBS]: COLLECTION_TIME_LIMIT_MS,
+  [PREPARE_APPLICATION]: PREPARE_TIME_LIMIT_MS,
 };
 
 /**

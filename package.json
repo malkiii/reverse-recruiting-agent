@@ -12,6 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.4.0",
     "drizzle-orm": "^0.45.4",
     "next": "^16.4.3",
     "node-html-markdown": "^2.0.0",

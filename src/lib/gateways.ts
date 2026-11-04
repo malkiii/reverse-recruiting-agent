@@ -1,4 +1,5 @@
-import type { actorRuns, functionRuns, jobBoardSettings, jobFeeds, jobs, JobSearch } from "./schema";
+import type { z } from "zod";
+import type { actorRuns, applications, functionRuns, jobBoardSettings, jobFeeds, jobs, JobSearch, LlmProvider } from "./schema";
 
 export type FunctionRun = typeof functionRuns.$inferSelect;
 
@@ -7,8 +8,11 @@ export type FunctionRunResult = Pick<FunctionRun, "finishedAt" | "error"> & {
 };
 
 export interface FunctionRunStore {
-  /** Marks runs past the time limit as failed, then claims a new run. Null means one is already active. */
-  start(functionName: string, startedAt: Date, timeLimitMs: number): Promise<number | null>;
+  /**
+   * Marks runs past the time limit as failed, then claims a new run, for the Application when one is given.
+   * Null means one is already active.
+   */
+  start(functionName: string, startedAt: Date, timeLimitMs: number, applicationId?: number): Promise<number | null>;
   finish(id: number, result: FunctionRunResult): Promise<void>;
   list(): Promise<FunctionRun[]>;
 }
@@ -73,7 +77,8 @@ export interface ImageGateway {
 
 export type Job = Omit<typeof jobs.$inferSelect, "id" | "alertState">;
 export type AlertState = (typeof jobs.$inferSelect)["alertState"];
-export type PendingAlertJob = Job & { id: number };
+export type SavedJob = Job & { id: number };
+export type PendingAlertJob = SavedJob;
 /** A Job as a source returns it. Job Collection works out its post day. */
 export type CollectedJob = Omit<Job, "postDay"> & { postDay?: string | null; ageInDays?: number | null };
 export type JobBoardSettings = typeof jobBoardSettings.$inferSelect;
@@ -84,6 +89,7 @@ export interface JobStore {
   /** Ignores any Job whose URL is already saved, and returns how many were new. */
   save(jobs: Job[]): Promise<number>;
   list(): Promise<Job[]>;
+  get(id: number): Promise<SavedJob | undefined>;
   /** Jobs whose Job Alert hasn't gone out yet, oldest first. */
   listPendingAlerts(): Promise<PendingAlertJob[]>;
   markAlertSent(id: number): Promise<void>;
@@ -135,4 +141,35 @@ export interface JobBoardGateway {
   start(search: JobSearch, limit: number, token: string): Promise<string>;
   status(run: ActorRun): Promise<ActorRunStatus>;
   results(run: ActorRun): Promise<CollectedJob[]>;
+}
+
+export type Application = typeof applications.$inferSelect;
+export type ApplicationStatus = Application["status"];
+export type PrepareStep = Application["currentStep"];
+export type ApplicationChanges = Partial<Omit<Application, "id" | "jobId" | "createdAt">>;
+
+export interface ApplicationStore {
+  /** Atomically creates the Job's one Application, as preparing. Null when the Job already has one. */
+  claim(jobId: number, createdAt: Date): Promise<number | null>;
+  get(id: number): Promise<Application | undefined>;
+  update(id: number, changes: ApplicationChanges): Promise<void>;
+}
+
+export interface JobPageReader {
+  /** The Job page's main content as markdown. Throws when the page can't be read. */
+  read(url: string): Promise<string>;
+}
+
+export type LlmChoice = { provider: LlmProvider; model: string };
+
+export interface LlmSettingsStore {
+  get(): Promise<LlmChoice | undefined>;
+  save(choice: LlmChoice): Promise<void>;
+}
+
+export type LlmRequest<T> = { instructions: string; prompt: string; schema: z.ZodType<T> };
+
+export interface LlmGateway {
+  /** One request, answered with the provider's structured output and parsed with the schema. */
+  generate<T>(request: LlmRequest<T>): Promise<T>;
 }

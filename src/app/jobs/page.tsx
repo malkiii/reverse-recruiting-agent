@@ -1,29 +1,40 @@
 import { revalidatePath } from "next/cache";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { connection } from "next/server";
-import { drizzleFunctionRunStore, drizzleJobStore } from "@/lib/drizzle";
+import { drizzleFunctionRunStore, findApplicationIdForJob, listJobsWithApplications } from "@/lib/drizzle";
+import { startFunction } from "@/lib/dashboard-functions";
 import { parseDashboardEnv } from "@/lib/env";
 import { isCollectionActive } from "@/lib/job-collection";
-import { COLLECT_JOBS } from "@/lib/schema";
+import { COLLECT_JOBS, PREPARE_APPLICATION } from "@/lib/schema";
 
 async function startCollection() {
   "use server";
 
-  const { FUNCTIONS_BASE_URL, FUNCTIONS_SECRET } = parseDashboardEnv(process.env);
-  const response = await fetch(new URL(`/functions/${COLLECT_JOBS}`, FUNCTIONS_BASE_URL), {
-    method: "POST",
-    headers: { authorization: `Bearer ${FUNCTIONS_SECRET}` },
-  });
   // 409 means one is already active, which the page shows after this refresh.
-  if (!response.ok && response.status !== 409) throw new Error(`The Function was refused: ${response.status}`);
+  await startFunction(COLLECT_JOBS);
   revalidatePath("/jobs");
+}
+
+async function prepareJob(formData: FormData) {
+  "use server";
+
+  const jobId = Number(formData.get("jobId"));
+  const response = await startFunction(PREPARE_APPLICATION, { jobId });
+  // A 409 means the Job already has its one Application, so the Admin is shown that one.
+  const applicationId =
+    response.status === 202
+      ? response.applicationId
+      : await findApplicationIdForJob(parseDashboardEnv(process.env).DATABASE_URL, jobId);
+  if (applicationId === undefined) throw new Error(`Job ${jobId} couldn't be Prepared`);
+  redirect(`/applications/${applicationId}`);
 }
 
 export default async function JobsPage() {
   await connection();
   const { DATABASE_URL } = parseDashboardEnv(process.env);
   const [jobs, runs] = await Promise.all([
-    drizzleJobStore(DATABASE_URL).list(),
+    listJobsWithApplications(DATABASE_URL),
     drizzleFunctionRunStore(DATABASE_URL).list(),
   ]);
   const running = isCollectionActive(runs, new Date());
@@ -52,6 +63,7 @@ export default async function JobsPage() {
               <th>Location</th>
               <th>Posted</th>
               <th>Source</th>
+              <th>Application</th>
             </tr>
           </thead>
           <tbody>
@@ -64,6 +76,16 @@ export default async function JobsPage() {
                 <td>{job.location}</td>
                 <td>{job.postDay}</td>
                 <td>{job.source}</td>
+                <td>
+                  {job.applicationId ? (
+                    <Link href={`/applications/${job.applicationId}`}>{job.applicationStatus}</Link>
+                  ) : (
+                    <form action={prepareJob}>
+                      <input type="hidden" name="jobId" value={job.id} />
+                      <button type="submit">Prepare</button>
+                    </form>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>

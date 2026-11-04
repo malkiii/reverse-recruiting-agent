@@ -3,7 +3,15 @@ import type { FunctionRun } from "./gateways";
 import { runAsOf } from "./function-runs";
 
 const startedAt = new Date("2026-11-01T12:00:00Z");
-const run: FunctionRun = { id: 1, functionName: "noop", status: "running", startedAt, finishedAt: null, error: null };
+const run: FunctionRun = {
+  id: 1,
+  functionName: "noop",
+  status: "running",
+  startedAt,
+  finishedAt: null,
+  error: null,
+  applicationId: null,
+};
 
 test("a running Function past its time limit shows as failed", () => {
   const now = new Date("2026-11-01T12:01:00Z");

@@ -1,29 +1,32 @@
-import { acceptFunctionRequest } from "./accept-function-request";
+import { acceptFunctionRequest, parseRequestBody } from "./accept-function-request";
 import { functions, functionServices } from "./index";
 import { runFunction } from "./run-function";
 
 /**
  * The entry points the Python wrapper in modal_app.py runs in Node:
- *   accept <function>, with the Authorization header in FUNCTION_AUTHORIZATION, prints the response as JSON.
- *   run <function> <runId> does the work and records how it ended.
+ *   accept <function>, with the Authorization header in FUNCTION_AUTHORIZATION and the JSON request body in
+ *     FUNCTION_BODY, claims the work and prints the response as JSON.
+ *   run <function> <runId> [applicationId] does the work and records how it ended.
  *   scheduled <function> claims a run and does the work, for the Modal schedule. It does nothing if one is active.
  */
 async function main() {
-  const [command, functionName, runId] = process.argv.slice(2);
+  const [command, functionName, runId, applicationId] = process.argv.slice(2);
 
   const definition = functions.get(functionName);
   if (!definition) throw new Error(`Unknown Function: ${functionName}`);
 
   const { timeLimitMs } = definition;
   const services = functionServices();
-  const work = () => definition.work(services);
+  const work = () => definition.work(services, applicationId ? Number(applicationId) : undefined);
 
   if (command === "accept") {
     const authorization = process.env.FUNCTION_AUTHORIZATION;
+    const body = parseRequestBody(process.env.FUNCTION_BODY);
+    const claim = definition.claim;
     // Modal spawns the Function once this returns, so there is nothing to start here.
     const result = await acceptFunctionRequest(
-      { functionName, timeLimitMs, authorization },
-      { ...services, start: () => {} },
+      { functionName, timeLimitMs, authorization, body },
+      { ...services, start: () => {}, claim: claim && ((body) => claim(services, body)) },
     );
     console.log(JSON.stringify(result));
   } else if (command === "run") {

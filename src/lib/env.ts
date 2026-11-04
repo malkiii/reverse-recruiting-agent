@@ -2,6 +2,12 @@ import { z } from "zod";
 
 type Variables = Record<string, string | undefined>;
 
+// An empty line copied from .env.example counts as unset.
+const optionalKey = z
+  .string()
+  .optional()
+  .transform((value) => value || undefined);
+
 const sharedSchema = z.object({
   DATABASE_URL: z.url(),
   FUNCTIONS_SECRET: z.string().min(1),
@@ -15,6 +21,11 @@ const functionsSchema = sharedSchema.extend({
   TELEGRAM_BOT_TOKEN: z.string().min(1),
   TELEGRAM_CHAT_ID: z.string().min(1),
   DASHBOARD_URL: z.url(),
+  // Only the LLM provider chosen in settings needs its key.
+  ANTHROPIC_API_KEY: optionalKey,
+  GEMINI_API_KEY: optionalKey,
+  OPENAI_API_KEY: optionalKey,
+  GROQ_API_KEY: optionalKey,
 });
 
 const dashboardSchema = sharedSchema.extend({

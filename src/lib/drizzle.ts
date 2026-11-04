@@ -3,6 +3,10 @@ import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import type {
   ActorRun,
+  ApplicationChanges,
+  ApplicationStore,
+  LlmChoice,
+  LlmSettingsStore,
   ActorRunStore,
   ExcludedKeywordStore,
   FunctionRunResult,
@@ -20,6 +24,7 @@ import type {
 } from "./gateways";
 import {
   actorRuns,
+  applications,
   excludedKeywords,
   functionRuns,
   googleConnection,
@@ -41,9 +46,15 @@ function client(databaseUrl: string) {
   return db;
 }
 
+/** A saved Job's columns, without its alert state. */
+function savedJobColumns() {
+  const { alertState: _alertState, ...columns } = getTableColumns(jobs);
+  return columns;
+}
+
 export function drizzleFunctionRunStore(databaseUrl: string): FunctionRunStore {
   return {
-    async start(functionName: string, startedAt: Date, timeLimitMs: number) {
+    async start(functionName: string, startedAt: Date, timeLimitMs: number, applicationId?: number) {
       await client(databaseUrl)
         .update(functionRuns)
         .set({ status: "failed", finishedAt: startedAt, error: "Passed its time limit" })
@@ -58,7 +69,7 @@ export function drizzleFunctionRunStore(databaseUrl: string): FunctionRunStore {
       // The one_active_job_collection index makes this the atomic claim for a Job Collection.
       const [run] = await client(databaseUrl)
         .insert(functionRuns)
-        .values({ functionName, status: "running", startedAt })
+        .values({ functionName, status: "running", startedAt, applicationId })
         .onConflictDoNothing()
         .returning({ id: functionRuns.id });
       return run?.id ?? null;
@@ -96,8 +107,14 @@ export function drizzleJobStore(databaseUrl: string): JobStore {
         .limit(JOBS_SHOWN);
     },
 
+    async get(id: number) {
+      const columns = savedJobColumns();
+      const [job] = await client(databaseUrl).select(columns).from(jobs).where(eq(jobs.id, id));
+      return job;
+    },
+
     listPendingAlerts() {
-      const { alertState: _alertState, ...columns } = getTableColumns(jobs);
+      const columns = savedJobColumns();
       return client(databaseUrl)
         .select(columns)
         .from(jobs)
@@ -271,4 +288,71 @@ export function drizzleResumeFolderStore(databaseUrl: string): ResumeFolderStore
         .onConflictDoUpdate({ target: settings.id, set: folder });
     },
   };
+}
+
+export function drizzleLlmSettingsStore(databaseUrl: string): LlmSettingsStore {
+  return {
+    async get() {
+      const [row] = await client(databaseUrl)
+        .select({ provider: settings.llmProvider, model: settings.llmModel })
+        .from(settings);
+      return row?.provider && row.model ? { provider: row.provider, model: row.model } : undefined;
+    },
+
+    async save({ provider, model }: LlmChoice) {
+      const choice = { llmProvider: provider, llmModel: model };
+      await client(databaseUrl).insert(settings).values(choice).onConflictDoUpdate({ target: settings.id, set: choice });
+    },
+  };
+}
+
+export function drizzleApplicationStore(databaseUrl: string): ApplicationStore {
+  return {
+    async claim(jobId: number, createdAt: Date) {
+      // The unique job_id makes this the atomic claim: a second Prepare inserts nothing.
+      const [application] = await client(databaseUrl)
+        .insert(applications)
+        .values({ jobId, status: "preparing", currentStep: "read-job", createdAt })
+        .onConflictDoNothing({ target: applications.jobId })
+        .returning({ id: applications.id });
+      return application?.id ?? null;
+    },
+
+    async get(id: number) {
+      const [application] = await client(databaseUrl).select().from(applications).where(eq(applications.id, id));
+      return application;
+    },
+
+    async update(id: number, changes: ApplicationChanges) {
+      await client(databaseUrl).update(applications).set(changes).where(eq(applications.id, id));
+    },
+  };
+}
+
+/** The dashboard's Jobs, each with its Application's ID and status when it has one. */
+export function listJobsWithApplications(databaseUrl: string) {
+  const columns = savedJobColumns();
+  return client(databaseUrl)
+    .select({ ...columns, applicationId: applications.id, applicationStatus: applications.status })
+    .from(jobs)
+    .leftJoin(applications, eq(applications.jobId, jobs.id))
+    .orderBy(desc(jobs.id))
+    .limit(JOBS_SHOWN);
+}
+
+export async function findApplicationIdForJob(databaseUrl: string, jobId: number) {
+  const [application] = await client(databaseUrl)
+    .select({ id: applications.id })
+    .from(applications)
+    .where(eq(applications.jobId, jobId));
+  return application?.id;
+}
+
+/** The Function runs that served an Application, newest first. */
+export function listFunctionRunsForApplication(databaseUrl: string, applicationId: number) {
+  return client(databaseUrl)
+    .select()
+    .from(functionRuns)
+    .where(eq(functionRuns.applicationId, applicationId))
+    .orderBy(desc(functionRuns.id));
 }

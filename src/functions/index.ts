@@ -1,6 +1,11 @@
 import { setTimeout } from "node:timers/promises";
+import { z } from "zod";
+import { prepare, runPreparation } from "../lib/application-lifecycle";
 import {
   drizzleActorRunStore,
+  drizzleApplicationStore,
+  drizzleLlmSettingsStore,
+  drizzleResumeFolderStore,
   drizzleExcludedKeywordStore,
   drizzleFunctionRunStore,
   drizzleGoogleConnectionStore,
@@ -11,23 +16,50 @@ import {
 } from "../lib/drizzle";
 import { parseFunctionsEnv } from "../lib/env";
 import { firecrawlJobFeedReader } from "../lib/firecrawl-job-feed";
-import { googleOAuth } from "../lib/google";
+import { firecrawlJobPageReader } from "../lib/firecrawl-job-page";
+import { googleDrive, googleOAuth } from "../lib/google";
 import { googleAccessToken } from "../lib/google-connection";
 import { glassdoorJobBoard } from "../lib/glassdoor-job-board";
 import { webImageGateway } from "../lib/images";
 import { FUNCTION_TIME_LIMITS_MS } from "../lib/function-runs";
 import { runCollection } from "../lib/job-collection";
 import { linkedInJobBoard } from "../lib/linkedin-job-board";
-import { COLLECT_JOBS } from "../lib/schema";
+import { llmGateway } from "../lib/llm";
+import { COLLECT_JOBS, PREPARE_APPLICATION } from "../lib/schema";
 import { telegramGateway } from "../lib/telegram";
+import { InvalidFunctionRequestError } from "./accept-function-request";
 
 type Services = ReturnType<typeof functionServices>;
 
-type FunctionDefinition = { timeLimitMs: number; work: (services: Services) => Promise<void> };
+type FunctionDefinition = {
+  timeLimitMs: number;
+  /** Claims the Application named in the request body. Null when it isn't in a startable state. */
+  claim?: (services: Services, body: unknown) => Promise<number | null>;
+  work: (services: Services, applicationId?: number) => Promise<void>;
+};
+
+const prepareRequestSchema = z.object({ jobId: z.number().int().positive() });
+
+function requireApplication(applicationId: number | undefined) {
+  if (applicationId === undefined) throw new Error("No Application was given");
+  return applicationId;
+}
 
 export const functions = new Map<string, FunctionDefinition>([
   ["noop", { timeLimitMs: FUNCTION_TIME_LIMITS_MS.noop, work: async () => {} }],
   [COLLECT_JOBS, { timeLimitMs: FUNCTION_TIME_LIMITS_MS[COLLECT_JOBS], work: runCollection }],
+  [
+    PREPARE_APPLICATION,
+    {
+      timeLimitMs: FUNCTION_TIME_LIMITS_MS[PREPARE_APPLICATION],
+      async claim(services, body) {
+        const request = prepareRequestSchema.safeParse(body);
+        if (!request.success) throw new InvalidFunctionRequestError("The request body needs a numeric jobId");
+        return prepare(services, request.data.jobId);
+      },
+      work: (services, applicationId) => runPreparation(services, requireApplication(applicationId)),
+    },
+  ],
 ]);
 
 export function functionServices() {
@@ -41,6 +73,10 @@ export function functionServices() {
     DASHBOARD_URL,
     GOOGLE_CLIENT_ID,
     GOOGLE_CLIENT_SECRET,
+    ANTHROPIC_API_KEY,
+    GEMINI_API_KEY,
+    OPENAI_API_KEY,
+    GROQ_API_KEY,
   } = parseFunctionsEnv(process.env);
   const now = () => new Date();
   const googleConnection = {
@@ -48,6 +84,9 @@ export function functionServices() {
     oauth: googleOAuth(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET),
     now,
   };
+  const accessToken = () => googleAccessToken(googleConnection);
+  const llmSettings = drizzleLlmSettingsStore(DATABASE_URL);
+  const llmApiKeys = { claude: ANTHROPIC_API_KEY, gemini: GEMINI_API_KEY, openai: OPENAI_API_KEY, groq: GROQ_API_KEY };
   return {
     runs: drizzleFunctionRunStore(DATABASE_URL),
     secret: FUNCTIONS_SECRET,
@@ -66,6 +105,11 @@ export function functionServices() {
     images: webImageGateway(),
     dashboardUrl: DASHBOARD_URL,
     /** The Admin's Google access token, from the connection the dashboard stored. */
-    googleAccessToken: () => googleAccessToken(googleConnection),
+    googleAccessToken: accessToken,
+    applications: drizzleApplicationStore(DATABASE_URL),
+    jobPages: firecrawlJobPageReader(FIRECRAWL_API_KEY),
+    resumeFolder: drizzleResumeFolderStore(DATABASE_URL),
+    drive: async () => googleDrive(await accessToken()),
+    llm: async () => llmGateway(await llmSettings.get(), llmApiKeys),
   };
 }

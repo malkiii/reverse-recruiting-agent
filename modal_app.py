@@ -9,6 +9,7 @@ import modal
 APP_DIR = "/app"
 CLI = ["npx", "tsx", "src/functions/cli.ts"]
 COLLECT_JOBS_TIMEOUT = 30 * 60  # COLLECTION_TIME_LIMIT_MS in src/lib/job-collection.ts
+PREPARE_APPLICATION_TIMEOUT = 30 * 60  # PREPARE_TIME_LIMIT_MS in src/lib/application-lifecycle.ts
 
 image = modal.Image.from_dockerfile("Dockerfile", add_python="3.12").pip_install("fastapi[standard]")
 secrets = [modal.Secret.from_name("reverse-recruiting-agent")]
@@ -25,6 +26,13 @@ def collect_jobs(run_id: int):
     subprocess.run([*CLI, "run", "collect-jobs", str(run_id)], cwd=APP_DIR, check=True)
 
 
+@app.function(timeout=PREPARE_APPLICATION_TIMEOUT)
+def prepare_application(run_id: int, application_id: int):
+    subprocess.run(
+        [*CLI, "run", "prepare-application", str(run_id), str(application_id)], cwd=APP_DIR, check=True
+    )
+
+
 # Late in the UTC day, because Job Collection keeps only Jobs posted today.
 # @app.function(timeout=COLLECT_JOBS_TIMEOUT, schedule=modal.Cron("0 22 * * *"))
 # def scheduled_collect_jobs():
@@ -34,19 +42,27 @@ def collect_jobs(run_id: int):
 @app.function()
 @modal.asgi_app()
 def web():
-    from fastapi import FastAPI, Header
+    from fastapi import FastAPI, Header, Request
+    from fastapi.concurrency import run_in_threadpool
     from fastapi.responses import JSONResponse
 
     api = FastAPI()
 
-    def accept(function_name: str, function: modal.Function, authorization: str | None):
-        env = {**os.environ, "FUNCTION_AUTHORIZATION": authorization or ""}
+    def accept(function_name: str, function: modal.Function, authorization: str | None, body: bytes = b""):
+        env = {
+            **os.environ,
+            "FUNCTION_AUTHORIZATION": authorization or "",
+            "FUNCTION_BODY": body.decode("utf-8", errors="replace"),
+        }
         output = subprocess.run(
             [*CLI, "accept", function_name], cwd=APP_DIR, env=env, check=True, stdout=subprocess.PIPE, text=True
         ).stdout
         result = json.loads(output.strip().splitlines()[-1])
         if result["status"] == 202:
-            function.spawn(result["runId"])
+            if "applicationId" in result:
+                function.spawn(result["runId"], result["applicationId"])
+            else:
+                function.spawn(result["runId"])
         return JSONResponse(result, status_code=result["status"])
 
     @api.post("/functions/noop")
@@ -56,5 +72,11 @@ def web():
     @api.post("/functions/collect-jobs")
     def start_collect_jobs(authorization: str | None = Header(default=None)):
         return accept("collect-jobs", collect_jobs, authorization)
+
+    @api.post("/functions/prepare-application")
+    async def start_prepare_application(request: Request, authorization: str | None = Header(default=None)):
+        body = await request.body()
+        # The body can only be read in an async route, so the blocking accept runs in a thread like the others.
+        return await run_in_threadpool(accept, "prepare-application", prepare_application, authorization, body)
 
     return api
