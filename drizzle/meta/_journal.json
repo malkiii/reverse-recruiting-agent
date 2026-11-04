@@ -43,6 +43,13 @@
       "when": 1793806893592,
       "tag": "0005_excluded_keywords",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793809249831,
+      "tag": "0006_google_connection_and_settings",
+      "breakpoints": true
     }
   ]
 }

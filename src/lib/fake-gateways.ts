@@ -8,6 +8,10 @@ import type {
   FunctionRun,
   FunctionRunResult,
   FunctionRunStore,
+  GoogleConnectionStore,
+  GoogleOAuthGateway,
+  GoogleTokens,
+  GrantedTokens,
   Image,
   ImageGateway,
   Job,
@@ -239,5 +243,35 @@ export class FakeJobBoard implements JobBoardGateway {
 
   async results(_run: ActorRun) {
     return this.jobs;
+  }
+}
+
+export class FakeGoogleConnectionStore implements GoogleConnectionStore {
+  constructor(public tokens?: GoogleTokens) {}
+
+  async get() {
+    return this.tokens;
+  }
+
+  async save(tokens: GoogleTokens) {
+    this.tokens = tokens;
+  }
+}
+
+/** Grants the tokens set here for any code, and for any refresh token in `accepted`, and null for the rest. */
+export class FakeGoogleOAuth implements GoogleOAuthGateway {
+  exchanged: { code: string; redirectUri: string }[] = [];
+  refreshed: string[] = [];
+  accepted = new Set(["refresh"]);
+  grant: GrantedTokens = { accessToken: "renewed", expiresInSeconds: 3600 };
+
+  async exchange(code: string, redirectUri: string) {
+    this.exchanged.push({ code, redirectUri });
+    return { refreshToken: "refresh", ...this.grant };
+  }
+
+  async refresh(refreshToken: string) {
+    this.refreshed.push(refreshToken);
+    return this.accepted.has(refreshToken) ? this.grant : null;
   }
 }

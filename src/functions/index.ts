@@ -3,6 +3,7 @@ import {
   drizzleActorRunStore,
   drizzleExcludedKeywordStore,
   drizzleFunctionRunStore,
+  drizzleGoogleConnectionStore,
   drizzleJobBoardSettingsStore,
   drizzleJobFeedStore,
   drizzleJobStore,
@@ -10,6 +11,8 @@ import {
 } from "../lib/drizzle";
 import { parseFunctionsEnv } from "../lib/env";
 import { firecrawlJobFeedReader } from "../lib/firecrawl-job-feed";
+import { googleOAuth } from "../lib/google";
+import { googleAccessToken } from "../lib/google-connection";
 import { glassdoorJobBoard } from "../lib/glassdoor-job-board";
 import { webImageGateway } from "../lib/images";
 import { FUNCTION_TIME_LIMITS_MS } from "../lib/function-runs";
@@ -36,11 +39,19 @@ export function functionServices() {
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_CHAT_ID,
     DASHBOARD_URL,
+    GOOGLE_CLIENT_ID,
+    GOOGLE_CLIENT_SECRET,
   } = parseFunctionsEnv(process.env);
+  const now = () => new Date();
+  const googleConnection = {
+    store: drizzleGoogleConnectionStore(DATABASE_URL),
+    oauth: googleOAuth(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET),
+    now,
+  };
   return {
     runs: drizzleFunctionRunStore(DATABASE_URL),
     secret: FUNCTIONS_SECRET,
-    now: () => new Date(),
+    now,
     sleep: async (ms: number) => void (await setTimeout(ms)),
     jobBoards: [linkedInJobBoard, glassdoorJobBoard],
     jobBoardSettings: drizzleJobBoardSettingsStore(DATABASE_URL),
@@ -54,5 +65,7 @@ export function functionServices() {
     telegram: telegramGateway(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID),
     images: webImageGateway(),
     dashboardUrl: DASHBOARD_URL,
+    /** The Admin's Google access token, from the connection the dashboard stored. */
+    googleAccessToken: () => googleAccessToken(googleConnection),
   };
 }

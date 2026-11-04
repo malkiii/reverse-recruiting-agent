@@ -7,15 +7,28 @@ import type {
   ExcludedKeywordStore,
   FunctionRunResult,
   FunctionRunStore,
+  GoogleConnectionStore,
+  GoogleTokens,
   Job,
   JobBoardSettings,
   JobBoardSettingsStore,
   JobFeed,
   JobFeedStore,
   JobStore,
+  ResumeFolderStore,
   SkippedApifyTokenStore,
 } from "./gateways";
-import { actorRuns, excludedKeywords, functionRuns, jobBoardSettings, jobFeeds, jobs, skippedApifyTokens } from "./schema";
+import {
+  actorRuns,
+  excludedKeywords,
+  functionRuns,
+  googleConnection,
+  jobBoardSettings,
+  jobFeeds,
+  jobs,
+  settings,
+  skippedApifyTokens,
+} from "./schema";
 
 const RUNS_SHOWN = 20;
 const JOBS_SHOWN = 200;
@@ -215,6 +228,47 @@ export function drizzleSkippedApifyTokenStore(databaseUrl: string): SkippedApify
         .insert(skippedApifyTokens)
         .values({ token, usableAt })
         .onConflictDoUpdate({ target: skippedApifyTokens.token, set: { usableAt } });
+    },
+  };
+}
+
+export function drizzleGoogleConnectionStore(databaseUrl: string): GoogleConnectionStore {
+  return {
+    async get() {
+      const [tokens] = await client(databaseUrl)
+        .select({
+          refreshToken: googleConnection.refreshToken,
+          accessToken: googleConnection.accessToken,
+          expiresAt: googleConnection.expiresAt,
+        })
+        .from(googleConnection);
+      return tokens;
+    },
+
+    async save(tokens: GoogleTokens) {
+      await client(databaseUrl)
+        .insert(googleConnection)
+        .values(tokens)
+        .onConflictDoUpdate({ target: googleConnection.id, set: tokens });
+    },
+  };
+}
+
+export function drizzleResumeFolderStore(databaseUrl: string): ResumeFolderStore {
+  return {
+    async get() {
+      const [row] = await client(databaseUrl)
+        .select({ id: settings.resumeFolderId, name: settings.resumeFolderName })
+        .from(settings);
+      return row?.id ? { id: row.id, name: row.name ?? "" } : undefined;
+    },
+
+    async save({ id, name }) {
+      const folder = { resumeFolderId: id, resumeFolderName: name };
+      await client(databaseUrl)
+        .insert(settings)
+        .values(folder)
+        .onConflictDoUpdate({ target: settings.id, set: folder });
     },
   };
 }

@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { bigint, boolean, date, jsonb, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { bigint, boolean, check, date, integer, jsonb, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 
 export const COLLECT_JOBS = "collect-jobs";
 
@@ -82,3 +82,28 @@ export const actorRuns = pgTable("actor_runs", {
   startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
   resultsSavedAt: timestamp("results_saved_at", { withTimezone: true }),
 }).enableRLS();
+
+// The table holds a single row, so the dashboard and Functions always read the same one.
+const singleRow = () => [check("single_row", sql`id = 1`)];
+
+/** The Admin's Google account, connected through OAuth, read by the dashboard and Functions. */
+export const googleConnection = pgTable(
+  "google_connection",
+  {
+    id: integer().primaryKey().default(1),
+    refreshToken: text("refresh_token").notNull(),
+    accessToken: text("access_token").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  singleRow,
+).enableRLS();
+
+export const settings = pgTable(
+  "settings",
+  {
+    id: integer().primaryKey().default(1),
+    resumeFolderId: text("resume_folder_id"),
+    resumeFolderName: text("resume_folder_name"),
+  },
+  singleRow,
+).enableRLS();

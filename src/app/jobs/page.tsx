@@ -33,7 +33,7 @@ export default async function JobsPage() {
       {running && <meta httpEquiv="refresh" content="5" />}
       <h1>Jobs</h1>
       <nav>
-        <Link href="/settings">Settings</Link> <Link href="/function-runs">Function runs</Link>
+        <Link href="/settings">Settings</Link> <Link href="/google">Google</Link> <Link href="/function-runs">Function runs</Link>
       </nav>
       <form action={startCollection}>
         <button type="submit" disabled={running}>

@@ -12,6 +12,8 @@ Copy `.env.example` to `.env.local`. The dashboard and Functions each validate o
 | -------------------- | -------------------- | ------------------------------------------------- |
 | `DATABASE_URL`       | Dashboard, Functions | Supabase transaction pooler connection, port 6543 |
 | `FUNCTIONS_SECRET`   | Dashboard, Functions | Bearer secret that protects Function routes       |
+| `GOOGLE_CLIENT_ID`   | Dashboard, Functions | Google OAuth client, for Gmail and Drive          |
+| `GOOGLE_CLIENT_SECRET` | Dashboard, Functions | Google OAuth client secret                      |
 | `APIFY_TOKENS`       | Functions            | Comma-separated Apify tokens, used round-robin    |
 | `FIRECRAWL_API_KEY`  | Functions            | Firecrawl key, used to read Job Feeds             |
 | `TELEGRAM_BOT_TOKEN` | Functions            | Telegram bot that sends Failure Alerts            |
@@ -21,6 +23,18 @@ Copy `.env.example` to `.env.local`. The dashboard and Functions each validate o
 | `FUNCTIONS_BASE_URL` | Dashboard            | Modal web endpoint, or the local worker           |
 
 Generate `FUNCTIONS_SECRET` with `openssl rand -hex 32`.
+
+## Google setup
+
+1. In Google Cloud, enable the Gmail API and the Google Drive API.
+2. On the OAuth consent screen, add the scopes `gmail.send` and `drive.readonly`, and nothing else.
+3. Publish the app as **In production**, even though it stays unverified. In **Testing**, Google expires refresh tokens every 7 days, which silently disconnects Gmail. Clicking through the "unverified app" warning once is expected.
+4. Create an OAuth client of type **Web application** with both redirect URIs:
+   - `http://localhost:3000/google/callback`, for Compose
+   - `https://<your dashboard>/google/callback`, for production
+5. Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in `.env.local`, Vercel and the Modal Secret.
+6. Sign in to the dashboard. On first entry it asks you to connect Google and choose the Resume Folder.
+7. Share the Resume Folder as "Anyone with the link". The app can only read Drive, so it warns about the sharing instead of changing it.
 
 ## Migrations
 
@@ -48,14 +62,14 @@ A push to `master` runs `.github/workflows/deploy.yml`, which applies migrations
 
 | Where          | Secret                                                                                                        | Purpose                                   |
 | -------------- | ------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
-| Modal          | `DATABASE_URL`, `FUNCTIONS_SECRET`, `APIFY_TOKENS`, `FIRECRAWL_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `DASHBOARD_URL` | Runtime variables for Functions           |
-| Vercel         | `DATABASE_URL`, `FUNCTIONS_SECRET`, `DASHBOARD_PASSWORD`, `FUNCTIONS_BASE_URL`                                | Runtime variables for the dashboard       |
+| Modal          | `DATABASE_URL`, `FUNCTIONS_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `APIFY_TOKENS`, `FIRECRAWL_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `DASHBOARD_URL` | Runtime variables for Functions           |
+| Vercel         | `DATABASE_URL`, `FUNCTIONS_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `DASHBOARD_PASSWORD`, `FUNCTIONS_BASE_URL` | Runtime variables for the dashboard       |
 | GitHub Actions | `DIRECT_DATABASE_URL`                                                                                         | Direct database connection for migrations |
 | GitHub Actions | `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET`                                                                        | Modal token for `modal deploy`            |
 
 GitHub-hosted runners have no IPv6, and Supabase's direct host is IPv6-only without its IPv4 add-on. Without the add-on, set `DIRECT_DATABASE_URL` to the session pooler connection, port 5432.
 
-Create the Modal Secret, with `modal.env` holding only its six variables:
+Create the Modal Secret, with `modal.env` holding only its eight variables:
 
 ```sh
 modal secret create reverse-recruiting-agent --from-dotenv modal.env

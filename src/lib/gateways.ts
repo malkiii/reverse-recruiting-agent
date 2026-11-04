@@ -24,6 +24,41 @@ export interface TelegramGateway {
   sendHtml(html: string, link: TelegramLink, photo?: Image): Promise<void>;
 }
 
+export type DriveFile = { id: string; name: string; mimeType: string; webViewLink: string };
+
+/** The Admin's Google connection: the long-lived refresh token and the latest access token. */
+export type GoogleTokens = { refreshToken: string; accessToken: string; expiresAt: Date };
+
+export interface GoogleConnectionStore {
+  get(): Promise<GoogleTokens | undefined>;
+  save(tokens: GoogleTokens): Promise<void>;
+}
+
+export type DriveFolder = { id: string; name: string };
+
+export interface ResumeFolderStore {
+  get(): Promise<DriveFolder | undefined>;
+  save(folder: DriveFolder): Promise<void>;
+}
+
+export type GrantedTokens = { accessToken: string; expiresInSeconds: number; refreshToken?: string };
+
+export interface DriveGateway {
+  /** Every folder the Admin owns, by name. */
+  listFolders(): Promise<DriveFolder[]>;
+  /** The files directly inside a folder. */
+  listFiles(folderId: string): Promise<DriveFile[]>;
+  /** Whether the folder is shared as "Anyone with the link", so its Resume links open for recipients. */
+  isSharedByLink(folderId: string): Promise<boolean>;
+}
+
+export interface GoogleOAuthGateway {
+  /** Trades the OAuth callback's code for tokens. Throws unless every scope was granted along with a refresh token. */
+  exchange(code: string, redirectUri: string): Promise<GrantedTokens & { refreshToken: string }>;
+  /** Null when Google no longer accepts the refresh token, because it was revoked or expired. */
+  refresh(refreshToken: string): Promise<GrantedTokens | null>;
+}
+
 export type PlaceholderName = "linkedin" | "glassdoor";
 
 /** Never throws: an image that can't be had is null. */

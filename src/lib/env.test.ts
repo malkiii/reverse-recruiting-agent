@@ -4,6 +4,8 @@ import { parseDashboardEnv, parseFunctionsEnv } from "./env";
 const sharedVariables = {
   DATABASE_URL: "postgres://user:password@db.example.com:6543/postgres",
   FUNCTIONS_SECRET: "secret",
+  GOOGLE_CLIENT_ID: "client-id.apps.googleusercontent.com",
+  GOOGLE_CLIENT_SECRET: "client-secret",
 };
 
 const functionsVariables = {
@@ -38,6 +40,14 @@ test("Functions need Telegram settings and the dashboard URL for Failure Alerts"
 test("the dashboard needs its password and the Functions base URL", () => {
   expect(parseDashboardEnv(dashboardVariables)).toEqual(dashboardVariables);
   expect(() => parseDashboardEnv(sharedVariables)).toThrow(/DASHBOARD_PASSWORD/);
+});
+
+test("both sides need the Google OAuth client, because both refresh the Google connection", () => {
+  const { GOOGLE_CLIENT_SECRET, ...withoutSecret } = functionsVariables;
+  const { GOOGLE_CLIENT_ID, ...withoutId } = dashboardVariables;
+
+  expect(() => parseFunctionsEnv(withoutSecret)).toThrow(/GOOGLE_CLIENT_SECRET/);
+  expect(() => parseDashboardEnv(withoutId)).toThrow(/GOOGLE_CLIENT_ID/);
 });
 
 test("variables the other side owns are left out of the parsed result", () => {
