@@ -13,7 +13,7 @@ import type {
   ResumeFolderStore,
   SavedJob,
 } from "./gateways";
-import { type DecisionMakerSearchDeps, findDecisionMakers } from "./decision-maker-search";
+import { chooseDecisionMakers, type DecisionMakerSearchDeps, savedPeopleCooldownReason } from "./decision-maker-search";
 import { FEED_SOURCE_PREFIX } from "./firecrawl-job-feed";
 import { resumesIn } from "./resumes";
 
@@ -170,12 +170,21 @@ async function findCompany(deps: PrepareDeps, job: SavedJob, { industryKeywords,
   return deps.companies.findOrCreate({ name: job.companyName, linkedinUrl });
 }
 
+/** Stops before anything is paid for when the Job's Company is already saved and all its people are in Cooldown. */
+async function checkSavedPeopleCooldown(deps: PrepareDeps, job: SavedJob) {
+  const company = job.companyLinkedinUrl ? await deps.companies.findByLinkedinUrl(job.companyLinkedinUrl) : undefined;
+  const reason = company ? await savedPeopleCooldownReason(deps, company.id) : null;
+  if (reason) throw new Stop(reason, "all-in-cooldown");
+}
+
 async function runSteps(deps: PrepareDeps, application: Application) {
   const { id } = application;
   const job = await deps.jobs.get(application.jobId);
   if (!job) throw new Error(`No Job ${application.jobId} for Application ${id}`);
   let { currentStep: step, jobPage } = application;
   let details: CompanySearchDetails = application;
+
+  if (step === "read-job") await checkSavedPeopleCooldown(deps, job);
 
   if (step === "read-job" || step === "choose-resume") {
     const resumes = await listResumes(deps);
@@ -202,11 +211,14 @@ async function runSteps(deps: PrepareDeps, application: Application) {
   if (step === "find-decision-makers") {
     const company = companyId === null ? undefined : await deps.companies.get(companyId);
     if (!company) throw new Error(`No Company ${companyId} for Application ${id}`);
-    const chosen = await findDecisionMakers(deps, id, company);
-    if (chosen.length === 0) throw new Stop("No Decision Maker with an email address was found", "no-contacts");
+    const choice = await chooseDecisionMakers(deps, id, company);
+    if (choice.outcome === "no-contacts") {
+      throw new Stop("No Decision Maker with an email address was found", "no-contacts");
+    }
+    if (choice.outcome === "all-in-cooldown") throw new Stop(choice.reason, "all-in-cooldown");
     step = "write-cover-letter";
     await deps.applications.update(id, { currentStep: step });
-    console.log(`Application ${id}: found ${chosen.length} Decision Maker(s)`);
+    console.log(`Application ${id}: chose ${choice.decisionMakers.length} Decision Maker(s)`);
   }
 }
 

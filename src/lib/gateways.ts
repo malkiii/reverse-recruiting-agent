@@ -187,6 +187,8 @@ export interface CompanyStore {
   /** The Company with this LinkedIn page, created when there's none yet. Returns its ID. */
   findOrCreate(company: Company): Promise<number>;
   get(id: number): Promise<SavedCompany | undefined>;
+  /** The Company with this LinkedIn page, if it's saved. */
+  findByLinkedinUrl(linkedinUrl: string): Promise<SavedCompany | undefined>;
 }
 
 export type SearchResult = { url: string; title: string };
@@ -217,7 +219,10 @@ export interface DecisionMakerStore {
    * none was found this time, and dates its People Refresh.
    */
   save(companyId: number, people: FoundPerson[], foundAt: Date): Promise<DecisionMaker[]>;
+  /** Everyone ever found at the Company, in the order they were first found. */
   listForCompany(companyId: number): Promise<DecisionMaker[]>;
+  /** When the Company's Decision Makers were last searched for. Null when they never were. */
+  peopleFoundAt(companyId: number): Promise<Date | null>;
   /** Makes them the Application's Decision Makers. */
   addToApplication(applicationId: number, decisionMakerIds: number[]): Promise<void>;
   listForApplication(applicationId: number): Promise<DecisionMaker[]>;

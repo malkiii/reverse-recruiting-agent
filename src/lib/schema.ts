@@ -181,6 +181,8 @@ export const decisionMakers = pgTable(
     email: text(),
     jobFunction: text("job_function", { enum: JOB_FUNCTIONS }).notNull(),
     foundAt: timestamp("found_at", { withTimezone: true }).notNull(),
+    /** When they were last emailed, which starts their Cooldown. */
+    lastEmailedAt: timestamp("last_emailed_at", { withTimezone: true }),
   },
   // People are kept unique by name within a Company.
   (table) => [unique("decision_makers_company_name_unique").on(table.companyId, table.name)],

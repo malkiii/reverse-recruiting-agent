@@ -420,7 +420,7 @@ test("everyone found is saved to the Company, with their function and any email"
     { name: "Bob", email: null, jobFunction: "12" },
     { name: "Cy", email: null, jobFunction: "12" },
   ]);
-  expect(deps.decisionMakers.peopleFoundAt.get(1)).toEqual(now);
+  expect(await deps.decisionMakers.peopleFoundAt(1)).toEqual(now);
 });
 
 test("people are kept unique by name, so someone found again under another function isn't looked up twice", async () => {
@@ -566,4 +566,105 @@ test("a run that fails again after a Retry fails the Application again", async (
   await expect(runPreparation(deps, id)).rejects.toThrow("employees-run-2 (employees:12) failed");
 
   expect(await deps.applications.get(id)).toMatchObject({ status: "failed", currentStep: "find-decision-makers" });
+});
+
+/** Acme saved with these people, found at the given time: name → email, null for none. */
+async function savedPeople(deps: Deps, foundAt: Date, people: Record<string, string | null>) {
+  const companyId = await deps.companies.findOrCreate({ name: "Acme", linkedinUrl: acmePage.url });
+  await deps.decisionMakers.save(
+    companyId,
+    Object.entries(people).map(([name, email]) => ({ ...person(name), email, jobFunction: "12" as const })),
+    foundAt,
+  );
+}
+
+const justUnderSixMonthsAgo = new Date("2026-05-04T10:00:00.001Z");
+const sixMonthsAgo = new Date("2026-05-04T10:00:00Z");
+
+test("saved people under 6 months old are reused with no actor runs, skipping those with no email", async () => {
+  const deps = await setup();
+  await savedPeople(deps, justUnderSixMonthsAgo, { Ann: null, Bob: "bob@acme.com", Cy: "cy@acme.com" });
+
+  const id = await prepareToDecisionMakers(deps);
+
+  expect(deps.employeesActor.started).toEqual([]);
+  expect(deps.emailsActor.started).toEqual([]);
+  expect(names(await deps.decisionMakers.listForApplication(id))).toEqual(["Bob", "Cy"]);
+  expect(await deps.applications.get(id)).toMatchObject({ status: "preparing", currentStep: "write-cover-letter" });
+});
+
+test("saved people 6 months old trigger a People Refresh, which chooses only from the people found again", async () => {
+  const deps = await setup();
+  await savedPeople(deps, sixMonthsAgo, { Ann: "ann@acme.com" });
+  employees(deps, "12", ["Bob"]);
+  emails(deps, ["Bob"], ["Bob"]);
+
+  const id = await prepareToDecisionMakers(deps);
+
+  expect(deps.employeesActor.inputs.map(({ jobFunction }) => jobFunction)).toEqual(["12", "9", "18", "19", "20"]);
+  expect(names(await deps.decisionMakers.listForApplication(id))).toEqual(["Bob"]);
+  expect(await deps.decisionMakers.peopleFoundAt(1)).toEqual(now);
+});
+
+test("saved people with no email aren't retried before the People Refresh, so the Application ends as No Contacts", async () => {
+  const deps = await setup();
+  await savedPeople(deps, justUnderSixMonthsAgo, { Ann: null, Bob: null });
+
+  const id = await prepareToDecisionMakers(deps);
+
+  expect(deps.employeesActor.started).toEqual([]);
+  expect(deps.emailsActor.started).toEqual([]);
+  expect(await deps.applications.get(id)).toMatchObject({ status: "no-contacts" });
+});
+
+const justUnderThirtyDaysAgo = new Date("2026-10-05T10:00:00.001Z");
+const thirtyDaysAgo = new Date("2026-10-05T10:00:00Z");
+
+test("a Decision Maker emailed under 30 days ago is in Cooldown and left out, but one emailed 30 days ago isn't", async () => {
+  const deps = await setup();
+  await savedPeople(deps, justUnderSixMonthsAgo, { Ann: "ann@acme.com", Bob: "bob@acme.com", Cy: "cy@acme.com" });
+  deps.decisionMakers.emailed("Ann", justUnderThirtyDaysAgo);
+  deps.decisionMakers.emailed("Bob", thirtyDaysAgo);
+
+  const id = await prepareToDecisionMakers(deps);
+
+  expect(names(await deps.decisionMakers.listForApplication(id))).toEqual(["Bob", "Cy"]);
+});
+
+test("when every saved person is in Cooldown, the Application stops at the start, before anything is paid for", async () => {
+  const deps = await setup();
+  await savedPeople(deps, justUnderSixMonthsAgo, { Ann: "ann@acme.com", Bob: "bob@acme.com", Cy: null });
+  deps.decisionMakers.emailed("Ann", justUnderThirtyDaysAgo);
+  deps.decisionMakers.emailed("Bob", new Date("2026-11-01T09:00:00Z"));
+  await deps.jobs.save([
+    { ...linkedInJob, title: "Platform Engineer", url: "https://www.linkedin.com/jobs/view/3", companyLinkedinUrl: acmePage.url },
+  ]);
+  const id = (await prepare(deps, 3))!;
+
+  await runPreparation(deps, id);
+
+  expect(await deps.applications.get(id)).toMatchObject({
+    status: "all-in-cooldown",
+    currentStep: "read-job",
+    error: "Every Decision Maker is in Cooldown, emailed: Ann 29 days ago, Bob 3 days ago",
+  });
+  expect(deps.fakeLlm.requests).toEqual([]);
+  expect(deps.employeesActor.started).toEqual([]);
+});
+
+test("newly found people in Cooldown are left out after the search, stopping the Application when that's everyone", async () => {
+  const deps = await setup();
+  await savedPeople(deps, sixMonthsAgo, { Ann: "ann@acme.com" });
+  deps.decisionMakers.emailed("Ann", new Date("2026-11-02T10:00:00Z"));
+  employees(deps, "12", ["Ann"]);
+  emails(deps, ["Ann"], ["Ann"]);
+
+  const id = await prepareToDecisionMakers(deps);
+
+  expect(deps.employeesActor.started).not.toEqual([]);
+  expect(await deps.applications.get(id)).toMatchObject({
+    status: "all-in-cooldown",
+    currentStep: "find-decision-makers",
+    error: "Every Decision Maker is in Cooldown, emailed: Ann 2 days ago",
+  });
 });

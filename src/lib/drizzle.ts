@@ -363,6 +363,8 @@ export function drizzleApplicationStore(databaseUrl: string): ApplicationStore {
   };
 }
 
+const companyColumns = { id: companies.id, name: companies.name, linkedinUrl: companies.linkedinUrl };
+
 export function drizzleCompanyStore(databaseUrl: string): CompanyStore {
   return {
     async findOrCreate(company: Company) {
@@ -376,10 +378,15 @@ export function drizzleCompanyStore(databaseUrl: string): CompanyStore {
     },
 
     async get(id: number) {
+      const [company] = await client(databaseUrl).select(companyColumns).from(companies).where(eq(companies.id, id));
+      return company;
+    },
+
+    async findByLinkedinUrl(linkedinUrl: string) {
       const [company] = await client(databaseUrl)
-        .select({ id: companies.id, name: companies.name, linkedinUrl: companies.linkedinUrl })
+        .select(companyColumns)
         .from(companies)
-        .where(eq(companies.id, id));
+        .where(eq(companies.linkedinUrl, linkedinUrl));
       return company;
     },
   };
@@ -415,6 +422,14 @@ export function drizzleDecisionMakerStore(databaseUrl: string): DecisionMakerSto
         .from(decisionMakers)
         .where(eq(decisionMakers.companyId, companyId))
         .orderBy(asc(decisionMakers.id));
+    },
+
+    async peopleFoundAt(companyId: number) {
+      const [company] = await client(databaseUrl)
+        .select({ peopleFoundAt: companies.peopleFoundAt })
+        .from(companies)
+        .where(eq(companies.id, companyId));
+      return company?.peopleFoundAt ?? null;
     },
 
     async addToApplication(applicationId: number, decisionMakerIds: number[]) {

@@ -449,6 +449,10 @@ export class FakeCompanyStore implements CompanyStore {
   async get(id: number) {
     return this.companies.find((company) => company.id === id);
   }
+
+  async findByLinkedinUrl(linkedinUrl: string) {
+    return this.companies.find((company) => company.linkedinUrl === linkedinUrl);
+  }
 }
 
 /** Returns the first result set for each query, and none for any other. */
@@ -509,7 +513,7 @@ export class FakeActor<Input, Result> implements ActorGateway<Input, Result> {
 
 export class FakeDecisionMakerStore implements DecisionMakerStore {
   saved: DecisionMaker[] = [];
-  peopleFoundAt = new Map<number, Date>();
+  private peopleFoundAtByCompany = new Map<number, Date>();
   recipients: { applicationId: number; decisionMakerId: number }[] = [];
 
   async save(companyId: number, people: FoundPerson[], foundAt: Date) {
@@ -517,18 +521,35 @@ export class FakeDecisionMakerStore implements DecisionMakerStore {
     for (const person of people) {
       const existing = this.saved.find((saved) => saved.companyId === companyId && saved.name === person.name);
       const email = person.email ?? existing?.email ?? null;
-      const decisionMaker = { ...person, email, companyId, foundAt, id: existing?.id ?? this.saved.length + 1 };
+      const decisionMaker = {
+        lastEmailedAt: null,
+        ...existing,
+        ...person,
+        email,
+        companyId,
+        foundAt,
+        id: existing?.id ?? this.saved.length + 1,
+      };
       this.saved = existing
         ? this.saved.map((saved) => (saved.id === existing.id ? decisionMaker : saved))
         : [...this.saved, decisionMaker];
       result.push(decisionMaker);
     }
-    this.peopleFoundAt.set(companyId, foundAt);
+    this.peopleFoundAtByCompany.set(companyId, foundAt);
     return result;
   }
 
   async listForCompany(companyId: number) {
     return this.saved.filter((saved) => saved.companyId === companyId);
+  }
+
+  async peopleFoundAt(companyId: number) {
+    return this.peopleFoundAtByCompany.get(companyId) ?? null;
+  }
+
+  /** Records an email to the named person, as Send will. */
+  emailed(name: string, at: Date) {
+    this.saved = this.saved.map((saved) => (saved.name === name ? { ...saved, lastEmailedAt: at } : saved));
   }
 
   async addToApplication(applicationId: number, decisionMakerIds: number[]) {

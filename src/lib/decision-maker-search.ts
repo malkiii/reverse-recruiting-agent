@@ -3,6 +3,7 @@ import type {
   ActorGateway,
   ActorRunStore,
   ApplicationActorRun,
+  DecisionMaker,
   DecisionMakerStore,
   EmailsActor,
   EmployeesActor,
@@ -94,15 +95,11 @@ async function actorRunner(deps: DecisionMakerSearchDeps, applicationId: number)
 }
 
 /**
- * Finds up to 4 Decision Makers with emails, function by function, and saves everyone found to the Company,
- * including those with no email. Emails are looked up only for as many people as are still needed. "any" is
- * searched only when nobody with an email was found. Returns the Application's Decision Makers, none for No Contacts.
+ * Searches the Company's employees function by function until 4 have emails, and saves everyone found to the
+ * Company, including those with no email. Emails are looked up only for as many people as are still needed. "any" is
+ * searched only when nobody with an email was found. Returns everyone found, as saved.
  */
-export async function findDecisionMakers(
-  deps: DecisionMakerSearchDeps,
-  applicationId: number,
-  company: SearchedCompany,
-) {
+async function searchPeople(deps: DecisionMakerSearchDeps, applicationId: number, company: SearchedCompany) {
   const run = await actorRunner(deps, applicationId);
   const found: FoundPerson[] = [];
   const withEmail = () => found.filter(({ email }) => email).length;
@@ -123,14 +120,11 @@ export async function findDecisionMakers(
 
     const lookUp = people.slice(0, DECISION_MAKERS_PER_APPLICATION - withEmail());
     if (lookUp.length > 0) {
-      const emails = await run(
-        deps.emailsActor,
-        `emails:${jobFunction}`,
-        lookUp.map(({ profileUrl }) => profileUrl),
-      );
+      const urls = lookUp.map(({ profileUrl }) => profileUrl);
+      const emails = await run(deps.emailsActor, `emails:${jobFunction}`, urls);
       for (const person of lookUp) {
-        person.email =
-          emails.find(({ profileUrl }) => profileKey(profileUrl) === profileKey(person.profileUrl))?.email ?? null;
+        const key = profileKey(person.profileUrl);
+        person.email = emails.find(({ profileUrl }) => profileKey(profileUrl) === key)?.email ?? null;
       }
     }
     console.log(
@@ -144,12 +138,89 @@ export async function findDecisionMakers(
   }
   if (withEmail() === 0) await search("any");
 
-  const saved = await deps.decisionMakers.save(company.id, found, deps.now());
-  const chosen = saved.filter(({ email }) => email);
-  if (chosen.length > 0)
+  return deps.decisionMakers.save(company.id, found, deps.now());
+}
+
+const DAY_MS = 24 * 60 * 60_000;
+const COOLDOWN_MS = 30 * DAY_MS;
+const PEOPLE_REFRESH_MONTHS = 6;
+
+/** Whether people found at this time are still current, or due a People Refresh. */
+function isCurrent(foundAt: Date, now: Date) {
+  const refreshAt = new Date(foundAt);
+  refreshAt.setUTCDate(1);
+  refreshAt.setUTCMonth(refreshAt.getUTCMonth() + PEOPLE_REFRESH_MONTHS);
+  // A day past the month's end, such as 31 August to February, falls on its last day.
+  const lastDay = new Date(Date.UTC(refreshAt.getUTCFullYear(), refreshAt.getUTCMonth() + 1, 0)).getUTCDate();
+  refreshAt.setUTCDate(Math.min(foundAt.getUTCDate(), lastDay));
+  return now < refreshAt;
+}
+
+const inCooldown = ({ lastEmailedAt }: DecisionMaker, now: Date) =>
+  lastEmailedAt !== null && now.getTime() - lastEmailedAt.getTime() < COOLDOWN_MS;
+
+function daysAgo(date: Date, now: Date) {
+  const days = Math.floor((now.getTime() - date.getTime()) / DAY_MS);
+  return days === 0 ? "today" : days === 1 ? "1 day ago" : `${days} days ago`;
+}
+
+/** The Company's saved people under 6 months old. Null when a People Refresh is due, or nobody was ever searched for. */
+async function currentPeople(deps: DecisionMakerSearchDeps, companyId: number) {
+  const now = deps.now();
+  const foundAt = await deps.decisionMakers.peopleFoundAt(companyId);
+  if (!foundAt || !isCurrent(foundAt, now)) return null;
+  return (await deps.decisionMakers.listForCompany(companyId)).filter((person) => isCurrent(person.foundAt, now));
+}
+
+export type DecisionMakerChoice =
+  | { outcome: "chosen"; decisionMakers: DecisionMaker[] }
+  | { outcome: "no-contacts" }
+  | { outcome: "all-in-cooldown"; reason: string };
+
+/** Up to 4 people with emails who aren't in Cooldown. */
+function chooseFrom(people: DecisionMaker[], now: Date): DecisionMakerChoice {
+  const withEmail = people.filter(({ email }) => email);
+  if (withEmail.length === 0) return { outcome: "no-contacts" };
+  const decisionMakers = withEmail
+    .filter((person) => !inCooldown(person, now))
+    .slice(0, DECISION_MAKERS_PER_APPLICATION);
+  if (decisionMakers.length > 0) return { outcome: "chosen", decisionMakers };
+  const contacted = withEmail.map(({ name, lastEmailedAt }) => `${name} ${daysAgo(lastEmailedAt!, now)}`);
+  return {
+    outcome: "all-in-cooldown",
+    reason: `Every Decision Maker is in Cooldown, emailed: ${contacted.join(", ")}`,
+  };
+}
+
+/**
+ * Checks the Cooldown of the Company's saved people before anything is paid for.
+ * Returns why the Application stops when every one of them with an email is in Cooldown, otherwise null.
+ */
+export async function savedPeopleCooldownReason(deps: DecisionMakerSearchDeps, companyId: number) {
+  const people = await currentPeople(deps, companyId);
+  if (!people) return null;
+  const choice = chooseFrom(people, deps.now());
+  return choice.outcome === "all-in-cooldown" ? choice.reason : null;
+}
+
+/**
+ * Chooses the Application's Decision Makers: the Company's saved people when under 6 months old, without any actor
+ * run, otherwise a People Refresh searches for them again. People in Cooldown are left out either way.
+ */
+export async function chooseDecisionMakers(
+  deps: DecisionMakerSearchDeps,
+  applicationId: number,
+  company: SearchedCompany,
+): Promise<DecisionMakerChoice> {
+  const saved = await currentPeople(deps, company.id);
+  if (saved) console.log(`Application ${applicationId}: reusing ${saved.length} saved people`);
+  const people = saved ?? (await searchPeople(deps, applicationId, company));
+  const choice = chooseFrom(people, deps.now());
+  if (choice.outcome === "chosen") {
     await deps.decisionMakers.addToApplication(
       applicationId,
-      chosen.map(({ id }) => id),
+      choice.decisionMakers.map(({ id }) => id),
     );
-  return chosen;
+  }
+  return choice;
 }
