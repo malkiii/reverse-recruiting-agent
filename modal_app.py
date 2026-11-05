@@ -10,6 +10,8 @@ APP_DIR = "/app"
 CLI = ["npx", "tsx", "src/functions/cli.ts"]
 COLLECT_JOBS_TIMEOUT = 30 * 60  # COLLECTION_TIME_LIMIT_MS in src/lib/job-collection.ts
 PREPARE_APPLICATION_TIMEOUT = 30 * 60  # PREPARE_TIME_LIMIT_MS in src/lib/application-lifecycle.ts
+# Read where `modal deploy` runs, because Modal resolves schedules at deploy time.
+TIMEZONE = os.environ.get("TIMEZONE") or "UTC"
 
 image = modal.Image.from_dockerfile("Dockerfile", add_python="3.12").pip_install("fastapi[standard]")
 secrets = [modal.Secret.from_name("reverse-recruiting-agent")]
@@ -33,9 +35,9 @@ def prepare_application(run_id: int, application_id: int):
     )
 
 
-# Late in the UTC day, because Job Collection keeps only Jobs posted today.
+# Job Collection keeps only Jobs posted today, so earlier runs see fewer of them.
 # It always fires; the CLI does nothing unless the schedule is turned on in Settings.
-@app.function(timeout=COLLECT_JOBS_TIMEOUT, schedule=modal.Cron("0 22 * * *"))
+@app.function(timeout=COLLECT_JOBS_TIMEOUT, schedule=modal.Cron("0 10 * * *", timezone=TIMEZONE))
 def scheduled_collect_jobs():
     subprocess.run([*CLI, "scheduled", "collect-jobs"], cwd=APP_DIR, check=True)
 

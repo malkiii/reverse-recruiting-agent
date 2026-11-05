@@ -66,6 +66,7 @@ A push to `master` runs `.github/workflows/deploy.yml`, which applies migrations
 | Vercel         | `DATABASE_URL`, `FUNCTIONS_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `DASHBOARD_PASSWORD`, `FUNCTIONS_BASE_URL` | Runtime variables for the dashboard       |
 | GitHub Actions | `DIRECT_DATABASE_URL`                                                                                         | Direct database connection for migrations |
 | GitHub Actions | `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET`                                                                        | Modal token for `modal deploy`            |
+| GitHub Actions | `TIMEZONE` (variable, not secret), e.g. `Africa/Algiers`; defaults to `UTC`                                   | Timezone of the scheduled Job Collection  |
 
 GitHub-hosted runners have no IPv6, and Supabase's direct host is IPv6-only without its IPv4 add-on. Without the add-on, set `DIRECT_DATABASE_URL` to the session pooler connection, port 5432.
 
@@ -80,7 +81,7 @@ Set `FUNCTIONS_BASE_URL` in Vercel to the web endpoint URL that `modal deploy` p
 ### Deploying by hand
 
 ```sh
-modal deploy modal_app.py
+TIMEZONE=Africa/Algiers modal deploy modal_app.py
 ```
 
 On Windows, set `PYTHONUTF8=1` first, or the Modal CLI can fail while printing build logs.
