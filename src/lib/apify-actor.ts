@@ -1,6 +1,6 @@
 import type { z } from "zod";
 import { ApifyTokenUsedUpError } from "./apify-tokens";
-import type { ActorRun, ActorRunStatus, CollectedJob } from "./gateways";
+import type { ActorRun, ActorRunStatus } from "./gateways";
 
 const API_URL = "https://api.apify.com/v2";
 const STILL_RUNNING = ["READY", "RUNNING", "TIMING-OUT", "ABORTING"];
@@ -33,18 +33,14 @@ export async function actorRunStatus({ runId, token }: ActorRun): Promise<ActorR
   return data.status === "SUCCEEDED" ? "succeeded" : "failed";
 }
 
-/** Reads a finished run's Jobs, skipping any item the schema rejects. */
-export async function actorRunJobs<T>(
-  run: ActorRun,
-  itemSchema: z.ZodType<T>,
-  toJob: (item: T) => CollectedJob,
-): Promise<CollectedJob[]> {
+/** Reads a finished run's items, skipping any item the schema rejects. */
+export async function actorRunItems<T, R>(run: ActorRun, itemSchema: z.ZodType<T>, toResult: (item: T) => R): Promise<R[]> {
   const items = await apify<unknown[]>(`/actor-runs/${run.runId}/dataset/items?clean=true`, run.token);
 
   return items.flatMap((item) => {
     const parsed = itemSchema.safeParse(item);
-    if (parsed.success) return [toJob(parsed.data)];
-    console.warn(`Skipped a malformed Job from actor run ${run.runId}`);
+    if (parsed.success) return [toResult(parsed.data)];
+    console.warn(`Skipped a malformed item from actor run ${run.runId}`);
     return [];
   });
 }

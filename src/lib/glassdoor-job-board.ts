@@ -1,6 +1,6 @@
 import { NodeHtmlMarkdown } from "node-html-markdown";
 import { z } from "zod";
-import { actorRunJobs, actorRunStatus, startActorRun } from "./apify-actor";
+import { actorRunItems, actorRunStatus, startActorRun } from "./apify-actor";
 import type { ActorRun, JobBoardGateway } from "./gateways";
 import type { JobSearch } from "./schema";
 
@@ -29,7 +29,7 @@ export const glassdoorJobBoard: JobBoardGateway = {
   status: actorRunStatus,
 
   results(run: ActorRun) {
-    return actorRunJobs(run, itemSchema, ({ url, title, employer, location, ageInDays, description }) => ({
+    return actorRunItems(run, itemSchema, ({ url, title, employer, location, ageInDays, description }) => ({
       source: SOURCE,
       title,
       companyName: employer.name,

@@ -3,7 +3,12 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import { startFunction } from "@/lib/dashboard-functions";
-import { drizzleApplicationStore, drizzleJobStore, listFunctionRunsForApplication } from "@/lib/drizzle";
+import {
+  drizzleApplicationStore,
+  drizzleDecisionMakerStore,
+  drizzleJobStore,
+  listFunctionRunsForApplication,
+} from "@/lib/drizzle";
 import { parseDashboardEnv } from "@/lib/env";
 import { runAsOf } from "@/lib/function-runs";
 import type { PrepareStep } from "@/lib/gateways";
@@ -14,6 +19,7 @@ const STEP_NAMES: Record<PrepareStep, string> = {
   "choose-resume": "Choosing a Resume",
   "find-company-page": "Finding the Company's LinkedIn page",
   "find-decision-makers": "Finding Decision Makers",
+  "write-cover-letter": "Writing the Cover Letter",
 };
 
 async function retryApplication(formData: FormData) {
@@ -32,9 +38,10 @@ export default async function ApplicationPage({ params }: { params: Promise<{ id
   const application = Number.isInteger(id) ? await drizzleApplicationStore(DATABASE_URL).get(id) : undefined;
   if (!application) notFound();
 
-  const [job, runs] = await Promise.all([
+  const [job, runs, decisionMakers] = await Promise.all([
     drizzleJobStore(DATABASE_URL).get(application.jobId),
     listFunctionRunsForApplication(DATABASE_URL, id),
+    drizzleDecisionMakerStore(DATABASE_URL).listForApplication(id),
   ]);
   const now = new Date();
   // Refreshes only while a Function is working on it, so a killed Function doesn't refresh forever.
@@ -96,6 +103,20 @@ export default async function ApplicationPage({ params }: { params: Promise<{ id
         <>
           <h2>Job Summary</h2>
           <p>{application.jobSummary}</p>
+        </>
+      )}
+
+      {decisionMakers.length > 0 && (
+        <>
+          <h2>Decision Makers</h2>
+          <ul>
+            {decisionMakers.map((decisionMaker) => (
+              <li key={decisionMaker.id}>
+                <a href={decisionMaker.profileUrl}>{decisionMaker.name}</a>, {decisionMaker.headline} &middot;{" "}
+                {decisionMaker.email}
+              </li>
+            ))}
+          </ul>
         </>
       )}
 

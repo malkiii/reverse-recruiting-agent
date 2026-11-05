@@ -14,7 +14,7 @@ Copy `.env.example` to `.env.local`. The dashboard and Functions each validate o
 | `FUNCTIONS_SECRET`   | Dashboard, Functions | Bearer secret that protects Function routes       |
 | `GOOGLE_CLIENT_ID`   | Dashboard, Functions | Google OAuth client, for Gmail and Drive          |
 | `GOOGLE_CLIENT_SECRET` | Dashboard, Functions | Google OAuth client secret                      |
-| `APIFY_TOKENS`       | Functions            | Comma-separated Apify tokens, used round-robin    |
+| `APIFY_TOKENS`       | Functions            | Comma-separated Apify tokens: Job Boards, Decision Makers |
 | `FIRECRAWL_API_KEY`  | Functions            | Firecrawl key: Job Feeds, Job pages, Company pages |
 | `TELEGRAM_BOT_TOKEN` | Functions            | Telegram bot that sends Failure Alerts            |
 | `TELEGRAM_CHAT_ID`   | Functions            | The Admin's Telegram chat                         |

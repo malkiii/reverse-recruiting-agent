@@ -13,6 +13,7 @@ import type {
   ResumeFolderStore,
   SavedJob,
 } from "./gateways";
+import { type DecisionMakerSearchDeps, findDecisionMakers } from "./decision-maker-search";
 import { FEED_SOURCE_PREFIX } from "./firecrawl-job-feed";
 import { resumesIn } from "./resumes";
 
@@ -20,16 +21,17 @@ export const PREPARE_TIME_LIMIT_MS = 30 * 60_000;
 
 type ClaimDeps = { jobs: JobStore; applications: ApplicationStore; now: () => Date };
 
-export type PrepareDeps = ClaimDeps & {
-  jobPages: JobPageReader;
-  resumeFolder: ResumeFolderStore;
-  /** The Admin's Drive, reached through the Google connection. */
-  drive: () => Promise<DriveGateway>;
-  /** The LLM the Admin chose in settings. */
-  llm: () => Promise<LlmGateway>;
-  companies: CompanyStore;
-  companyPageSearch: CompanyPageSearch;
-};
+export type PrepareDeps = ClaimDeps &
+  DecisionMakerSearchDeps & {
+    jobPages: JobPageReader;
+    resumeFolder: ResumeFolderStore;
+    /** The Admin's Drive, reached through the Google connection. */
+    drive: () => Promise<DriveGateway>;
+    /** The LLM the Admin chose in settings. */
+    llm: () => Promise<LlmGateway>;
+    companies: CompanyStore;
+    companyPageSearch: CompanyPageSearch;
+  };
 
 /** The Admin's Prepare: atomically claims the Job's one Application. Null when the Job is unknown or already has one. */
 export async function prepare({ jobs, applications, now }: ClaimDeps, jobId: number) {
@@ -189,11 +191,22 @@ async function runSteps(deps: PrepareDeps, application: Application) {
     console.log(`Application ${id}: chose ${chosen.resumeName}`);
   }
 
+  let { companyId } = application;
   if (step === "find-company-page") {
-    const companyId = await findCompany(deps, job, details);
+    companyId = await findCompany(deps, job, details);
     step = "find-decision-makers";
     await deps.applications.update(id, { companyId, currentStep: step });
     console.log(`Application ${id}: found Company ${companyId}`);
+  }
+
+  if (step === "find-decision-makers") {
+    const company = companyId === null ? undefined : await deps.companies.get(companyId);
+    if (!company) throw new Error(`No Company ${companyId} for Application ${id}`);
+    const chosen = await findDecisionMakers(deps, id, company);
+    if (chosen.length === 0) throw new Stop("No Decision Maker with an email address was found", "no-contacts");
+    step = "write-cover-letter";
+    await deps.applications.update(id, { currentStep: step });
+    console.log(`Application ${id}: found ${chosen.length} Decision Maker(s)`);
   }
 }
 

@@ -22,9 +22,11 @@ One item per URL. A failed lookup has `found: false` and an `error` instead of t
 | `company` | string | Company, when found |
 | `error` | string | Why no email was found, such as "No email found in response" |
 
+`linkedin_url` is normalized by the actor, so it's matched to the looked-up URL ignoring protocol, `www`, case and a trailing slash.
+
 ## Output example
 
-From the store page.
+From the store page. A real run on 2026-11-05 returned the same fields.
 
 ```json
 {

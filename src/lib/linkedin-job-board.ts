@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { actorRunJobs, actorRunStatus, startActorRun } from "./apify-actor";
+import { actorRunItems, actorRunStatus, startActorRun } from "./apify-actor";
 import type { ActorRun, JobBoardGateway } from "./gateways";
 import type { JobSearch } from "./schema";
 
@@ -40,7 +40,7 @@ export const linkedInJobBoard: JobBoardGateway = {
   status: actorRunStatus,
 
   results(run: ActorRun) {
-    return actorRunJobs(
+    return actorRunItems(
       run,
       itemSchema,
       ({ job_url, job_title, company_name, location, posted_date, job_description, company_url, company_logo_url }) => ({

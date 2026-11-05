@@ -10,6 +10,8 @@
 | `maxEmployees` | integer | Stop after this many profiles per company. The free tier caps it at 100, Premium at 500. |
 | `currentFunction` | string | Only employees with this job function, like the Function filter on a company's People tab. Default `any`. |
 
+`currentFunction` takes LinkedIn's function IDs as strings, confirmed from the actor's input schema and a real run on 2026-11-05: Human Resources `"12"`, Entrepreneurship `"9"`, Operations `"18"`, Product Management `"19"`, Program and Project Management `"20"`, or `"any"`.
+
 ## Output
 
 One item per employee.
@@ -27,17 +29,19 @@ One item per employee.
 
 ## Output example
 
-From the store page.
+From a real run on 2026-11-05, with `currentFunction: "12"`. It also returns `companyUrl` and `companySlug`.
 
 ```json
 {
-  "image": "https://media.licdn.com/dms/image/.../profile.jpg",
-  "name": "Mark Colbert",
-  "headline": "Director of Engineering at Google",
-  "location": "Belmont, California, United States",
-  "profileUrl": "https://www.linkedin.com/in/markcolbert",
-  "companyName": "Google",
-  "source": "pro",
-  "scrapedAt": "2026-06-02T22:06:12.846Z"
+  "image": "https://media.licdn.com/dms/image/.../profile-displayphoto-scale_100_100/...",
+  "name": "Jess Totah",
+  "headline": "Talent Acquisition for High-Growth Companies",
+  "location": "Newark, CA",
+  "profileUrl": "https://www.linkedin.com/in/jessica-totah",
+  "companyUrl": "https://www.linkedin.com/company/vercel/",
+  "companyName": "Vercel",
+  "companySlug": "vercel",
+  "source": "standard",
+  "scrapedAt": "2026-11-05T11:54:14.157Z"
 }
 ```

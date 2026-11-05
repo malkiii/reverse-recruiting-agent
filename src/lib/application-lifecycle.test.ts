@@ -1,15 +1,21 @@
 import { expect, test } from "vitest";
 import { prepare, retry, runPreparation } from "./application-lifecycle";
 import {
+  FakeActor,
+  FakeActorRunStore,
   FakeApplicationStore,
   FakeCompanyPageSearch,
   FakeCompanyStore,
+  FakeDecisionMakerStore,
   FakeDrive,
   FakeJobPages,
   FakeJobStore,
   FakeLlm,
   FakeResumeFolderStore,
+  FakeSkippedApifyTokenStore,
 } from "./fake-gateways";
+import type { EmployeeSearch, FoundEmail, Person } from "./gateways";
+import type { JobFunction } from "./schema";
 
 const now = new Date("2026-11-04T10:00:00Z");
 
@@ -58,6 +64,13 @@ async function setup() {
     companies: new FakeCompanyStore(),
     companyPageSearch,
     resumeFolder: new FakeResumeFolderStore({ id: "folder", name: "Resumes" }),
+    employeesActor: new FakeActor<EmployeeSearch, Person>("employees"),
+    emailsActor: new FakeActor<string[], FoundEmail>("emails"),
+    actorRuns: new FakeActorRunStore(),
+    decisionMakers: new FakeDecisionMakerStore(),
+    apifyTokens: "token-a,token-b",
+    skippedApifyTokens: new FakeSkippedApifyTokenStore(),
+    sleep: async () => {},
     drive: async () => drive,
     llm: async () => llm,
     now: () => now,
@@ -91,9 +104,7 @@ test("Prepare uses a Job Board Job's collected description and saves the Resume 
   await runPreparation(deps, id);
 
   expect(await deps.applications.get(id)).toMatchObject({
-    status: "preparing",
     currentStep: "find-decision-makers",
-    error: null,
     jobPage: "Collected description: build APIs in Go",
     industryKeywords: ["software", "fintech"],
     jobLocation: "Berlin, Germany",
@@ -128,7 +139,6 @@ test("Prepare reads a Feed Job's page and saves it as the Job page", async () =>
   await runPreparation(deps, id);
 
   expect(await deps.applications.get(id)).toMatchObject({
-    status: "preparing",
     currentStep: "find-decision-makers",
     jobPage: "# Data Analyst\nBuild dashboards.",
     resumeName: "Data Analyst CV.pdf",
@@ -233,7 +243,6 @@ test("a Job with a saved Company LinkedIn page uses it without searching", async
   expect(deps.companyPageSearch.queries).toEqual([]);
   expect(deps.companies.companies).toEqual([{ id: 1, name: "Acme", linkedinUrl: "https://www.linkedin.com/company/acme" }]);
   expect(await deps.applications.get(id)).toMatchObject({
-    status: "preparing",
     currentStep: "find-decision-makers",
     companyId: 1,
   });
@@ -248,7 +257,7 @@ test("Prepare searches for the Company's LinkedIn page and accepts a first resul
 
   expect(deps.companyPageSearch.queries).toEqual([acmeQuery]);
   expect(deps.companies.companies).toEqual([{ id: 1, name: "Acme", linkedinUrl: acmePage.url }]);
-  expect(await deps.applications.get(id)).toMatchObject({ status: "preparing", companyId: 1 });
+  expect(await deps.applications.get(id)).toMatchObject({ currentStep: "find-decision-makers", companyId: 1 });
 });
 
 test("a first search result for another Company ends the Application as Direct Apply, keeping the chosen Resume", async () => {
@@ -333,5 +342,228 @@ test("the match ignores company suffixes such as Inc and Ltd", async () => {
 
   await runPreparation(deps, id);
 
-  expect(await deps.applications.get(id)).toMatchObject({ status: "preparing", companyId: 1 });
+  expect(await deps.applications.get(id)).toMatchObject({ currentStep: "find-decision-makers", companyId: 1 });
+});
+
+const person = (name: string): Person => ({
+  name,
+  headline: `${name} at Acme`,
+  profileUrl: `https://www.linkedin.com/in/${name.toLowerCase().replace(" ", "-")}`,
+});
+
+const search = (jobFunction: JobFunction): EmployeeSearch => ({ companyUrl: acmePage.url, jobFunction, maxEmployees: 4 });
+
+type Deps = Awaited<ReturnType<typeof setup>>;
+
+/** The employees actor finds these people for the function. */
+function employees(deps: Deps, jobFunction: JobFunction, names: string[]) {
+  deps.employeesActor.returns(search(jobFunction), names.map(person));
+}
+
+/** The email actor answers a lookup of exactly these names, finding an email for those in `withEmail`. */
+function emails(deps: Deps, names: string[], withEmail: string[]) {
+  deps.emailsActor.returns(
+    names.map((name) => person(name).profileUrl),
+    names.map((name) => ({
+      profileUrl: person(name).profileUrl,
+      email: withEmail.includes(name) ? `${name.toLowerCase()}@acme.com` : null,
+    })),
+  );
+}
+
+/** Prepares the LinkedIn Job through to the Decision Maker search. */
+async function prepareToDecisionMakers(deps: Deps) {
+  deps.fakeLlm.answers.push(answer);
+  const id = (await prepare(deps, 1))!;
+  await runPreparation(deps, id);
+  return id;
+}
+
+const names = (people: { name: string }[]) => people.map(({ name }) => name);
+
+test("Decision Makers are searched function by function until 4 have emails, asking each run for 4", async () => {
+  const deps = await setup();
+  employees(deps, "12", ["Ann", "Bob"]);
+  emails(deps, ["Ann", "Bob"], ["Ann", "Bob"]);
+  employees(deps, "9", ["Cy", "Dee"]);
+  emails(deps, ["Cy", "Dee"], ["Cy"]);
+  employees(deps, "18", ["Eve", "Fay"]);
+  emails(deps, ["Eve"], ["Eve"]);
+
+  const id = await prepareToDecisionMakers(deps);
+
+  expect(deps.employeesActor.inputs).toEqual([search("12"), search("9"), search("18")]);
+  // Emails are looked up only for as many people as are still needed, so Fay isn't looked up.
+  expect(deps.emailsActor.inputs).toEqual([
+    [person("Ann").profileUrl, person("Bob").profileUrl],
+    [person("Cy").profileUrl, person("Dee").profileUrl],
+    [person("Eve").profileUrl],
+  ]);
+  expect(names(await deps.decisionMakers.listForApplication(id))).toEqual(["Ann", "Bob", "Cy", "Eve"]);
+  expect(names(await deps.decisionMakers.listForCompany(1))).toEqual(["Ann", "Bob", "Cy", "Dee", "Eve", "Fay"]);
+  expect(await deps.applications.get(id)).toMatchObject({
+    status: "preparing",
+    currentStep: "write-cover-letter",
+    error: null,
+  });
+});
+
+test("everyone found is saved to the Company, with their function and any email", async () => {
+  const deps = await setup();
+  employees(deps, "12", ["Ann", "Bob", "Cy"]);
+  emails(deps, ["Ann", "Bob", "Cy"], ["Ann"]);
+
+  await prepareToDecisionMakers(deps);
+
+  expect(await deps.decisionMakers.listForCompany(1)).toMatchObject([
+    { name: "Ann", headline: "Ann at Acme", email: "ann@acme.com", jobFunction: "12", foundAt: now },
+    { name: "Bob", email: null, jobFunction: "12" },
+    { name: "Cy", email: null, jobFunction: "12" },
+  ]);
+  expect(deps.decisionMakers.peopleFoundAt.get(1)).toEqual(now);
+});
+
+test("people are kept unique by name, so someone found again under another function isn't looked up twice", async () => {
+  const deps = await setup();
+  employees(deps, "12", ["Ann"]);
+  emails(deps, ["Ann"], []);
+  employees(deps, "9", ["ann ", "Bob"]);
+  emails(deps, ["Bob"], ["Bob"]);
+
+  const id = await prepareToDecisionMakers(deps);
+
+  expect(deps.emailsActor.inputs).toEqual([[person("Ann").profileUrl], [person("Bob").profileUrl]]);
+  expect(names(await deps.decisionMakers.listForCompany(1))).toEqual(["Ann", "Bob"]);
+  expect(names(await deps.decisionMakers.listForApplication(id))).toEqual(["Bob"]);
+});
+
+test("the search stops with 1-3 Decision Makers once all 5 functions are done, without searching any", async () => {
+  const deps = await setup();
+  employees(deps, "12", ["Ann", "Bob"]);
+  emails(deps, ["Ann", "Bob"], ["Ann"]);
+  employees(deps, "20", ["Cy"]);
+  emails(deps, ["Cy"], ["Cy"]);
+
+  const id = await prepareToDecisionMakers(deps);
+
+  expect(deps.employeesActor.inputs).toEqual([search("12"), search("9"), search("18"), search("19"), search("20")]);
+  expect(names(await deps.decisionMakers.listForApplication(id))).toEqual(["Ann", "Cy"]);
+  expect(await deps.applications.get(id)).toMatchObject({ status: "preparing", currentStep: "write-cover-letter" });
+});
+
+test("any is searched once, last, when nobody with an email was found in the 5 functions", async () => {
+  const deps = await setup();
+  employees(deps, "12", ["Ann"]);
+  emails(deps, ["Ann"], []);
+  employees(deps, "any", ["Ann", "Bob"]);
+  emails(deps, ["Bob"], ["Bob"]);
+
+  const id = await prepareToDecisionMakers(deps);
+
+  expect(deps.employeesActor.inputs.map(({ jobFunction }) => jobFunction)).toEqual(["12", "9", "18", "19", "20", "any"]);
+  expect(await deps.decisionMakers.listForApplication(id)).toMatchObject([{ name: "Bob", jobFunction: "any" }]);
+});
+
+test("nobody with an email ends the Application as No Contacts, still saving the people found", async () => {
+  const deps = await setup();
+  employees(deps, "18", ["Ann"]);
+  emails(deps, ["Ann"], []);
+
+  const id = await prepareToDecisionMakers(deps);
+
+  expect(deps.employeesActor.inputs).toHaveLength(6);
+  expect(await deps.applications.get(id)).toMatchObject({
+    status: "no-contacts",
+    currentStep: "find-decision-makers",
+    error: "No Decision Maker with an email address was found",
+  });
+  expect(names(await deps.decisionMakers.listForCompany(1))).toEqual(["Ann"]);
+  expect(await deps.decisionMakers.listForApplication(id)).toEqual([]);
+});
+
+test("each actor run is saved before it's polled, with the Application and what it's for", async () => {
+  const deps = await setup();
+  employees(deps, "12", ["Ann", "Bob", "Cy", "Dee"]);
+  emails(deps, ["Ann", "Bob", "Cy", "Dee"], ["Ann", "Bob", "Cy", "Dee"]);
+  deps.employeesActor.statuses.set(JSON.stringify(search("12")), ["running", "running", "succeeded"]);
+
+  const id = await prepareToDecisionMakers(deps);
+
+  expect(await deps.actorRuns.listForApplication(id)).toMatchObject([
+    { runId: "employees-run-1", actor: "employees", token: "token-a", applicationId: id, purpose: "employees:12" },
+    { runId: "emails-run-1", actor: "emails", token: "token-b", applicationId: id, purpose: "emails:12" },
+  ]);
+  expect(await deps.actorRuns.listUnfinished()).toEqual([]);
+  expect(names(await deps.decisionMakers.listForApplication(id))).toHaveLength(4);
+});
+
+test("a Retry resumes the actor run still going instead of starting another", async () => {
+  const deps = await setup();
+  employees(deps, "12", ["Ann", "Bob", "Cy", "Dee"]);
+  emails(deps, ["Ann", "Bob", "Cy", "Dee"], ["Ann", "Bob", "Cy", "Dee"]);
+  // Still running after every poll the Function has, then done by the Retry.
+  deps.employeesActor.statuses.set(JSON.stringify(search("12")), [...Array(121).fill("running"), "succeeded"]);
+
+  deps.fakeLlm.answers.push(answer);
+  const id = (await prepare(deps, 1))!;
+  await expect(runPreparation(deps, id)).rejects.toThrow("is still running");
+  expect(await deps.applications.get(id)).toMatchObject({
+    status: "failed",
+    error: "Actor run employees-run-1 (employees:12) is still running: Retry to resume it",
+  });
+
+  await retry(deps, id);
+  await runPreparation(deps, id);
+
+  expect(deps.employeesActor.started).toHaveLength(1);
+  expect(deps.fakeLlm.requests).toHaveLength(1);
+  expect(await deps.applications.get(id)).toMatchObject({ status: "preparing", currentStep: "write-cover-letter" });
+});
+
+test("a Retry rereads finished runs and starts again only the run that failed", async () => {
+  const deps = await setup();
+  employees(deps, "12", ["Ann"]);
+  emails(deps, ["Ann"], ["Ann"]);
+  employees(deps, "9", ["Bob"]);
+  emails(deps, ["Bob"], ["Bob"]);
+  deps.employeesActor.statuses.set(JSON.stringify(search("9")), ["failed"]);
+  deps.fakeLlm.answers.push(answer);
+  const id = (await prepare(deps, 1))!;
+  await expect(runPreparation(deps, id)).rejects.toThrow("failed: Retry to start it again");
+  expect(await deps.applications.get(id)).toMatchObject({ status: "failed" });
+
+  deps.employeesActor.statuses.clear();
+  await retry(deps, id);
+  await runPreparation(deps, id);
+
+  expect(deps.employeesActor.inputs.map(({ jobFunction }) => jobFunction)).toEqual(["12", "9", "9", "18", "19", "20"]);
+  expect(deps.emailsActor.started).toHaveLength(2);
+  expect(names(await deps.decisionMakers.listForApplication(id))).toEqual(["Ann", "Bob"]);
+});
+
+test("emails are matched to people by profile URL, ignoring how the email actor writes it, and anyone missing is skipped", async () => {
+  const deps = await setup();
+  employees(deps, "12", ["Ann", "Bob"]);
+  deps.emailsActor.returns(
+    [person("Ann").profileUrl, person("Bob").profileUrl],
+    [{ profileUrl: "http://linkedin.com/in/Ann/", email: "ann@acme.com" }],
+  );
+
+  const id = await prepareToDecisionMakers(deps);
+
+  expect(await deps.decisionMakers.listForApplication(id)).toMatchObject([{ name: "Ann", email: "ann@acme.com" }]);
+  expect(await deps.decisionMakers.listForCompany(1)).toMatchObject([{ name: "Ann" }, { name: "Bob", email: null }]);
+});
+
+test("a run that fails again after a Retry fails the Application again", async () => {
+  const deps = await setup();
+  deps.employeesActor.statuses.set(JSON.stringify(search("12")), ["failed"]);
+  deps.fakeLlm.answers.push(answer);
+  const id = (await prepare(deps, 1))!;
+  await expect(runPreparation(deps, id)).rejects.toThrow("employees-run-1 (employees:12) failed");
+
+  await retry(deps, id);
+  await expect(runPreparation(deps, id)).rejects.toThrow("employees-run-2 (employees:12) failed");
+
+  expect(await deps.applications.get(id)).toMatchObject({ status: "failed", currentStep: "find-decision-makers" });
 });

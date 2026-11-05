@@ -64,6 +64,13 @@
       "when": 1793829329989,
       "tag": "0008_company_pages",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1793879766312,
+      "tag": "0009_decision_makers",
+      "breakpoints": true
     }
   ]
 }

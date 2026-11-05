@@ -1,5 +1,16 @@
 import type { z } from "zod";
-import type { actorRuns, applications, functionRuns, jobBoardSettings, jobFeeds, jobs, JobSearch, LlmProvider } from "./schema";
+import type {
+  actorRuns,
+  applications,
+  decisionMakers,
+  functionRuns,
+  JobFunction,
+  jobBoardSettings,
+  jobFeeds,
+  jobs,
+  JobSearch,
+  LlmProvider,
+} from "./schema";
 
 export type FunctionRun = typeof functionRuns.$inferSelect;
 
@@ -82,7 +93,9 @@ export type PendingAlertJob = SavedJob;
 /** A Job as a source returns it. Job Collection works out its post day. */
 export type CollectedJob = Omit<Job, "postDay"> & { postDay?: string | null; ageInDays?: number | null };
 export type JobBoardSettings = typeof jobBoardSettings.$inferSelect;
-export type ActorRun = Omit<typeof actorRuns.$inferSelect, "resultsSavedAt">;
+export type ActorRun = Pick<typeof actorRuns.$inferSelect, "runId" | "actor" | "token" | "search" | "startedAt">;
+/** An actor run of an Application's Decision Maker search, found again by its purpose on a Retry. */
+export type ApplicationActorRun = ActorRun & { applicationId: number; purpose: string };
 export type ActorRunStatus = "running" | "succeeded" | "failed";
 
 export interface JobStore {
@@ -107,9 +120,14 @@ export interface ExcludedKeywordStore {
 }
 
 export interface ActorRunStore {
-  save(run: ActorRun): Promise<void>;
-  /** Every actor run that hasn't been closed yet, oldest first. */
+  save(run: ActorRun | ApplicationActorRun): Promise<void>;
+  /** Every Job Collection actor run that hasn't been closed yet, oldest first. */
   listUnfinished(): Promise<ActorRun[]>;
+  /**
+   * The Application's actor runs that haven't been closed, oldest first.
+   * A finished run stays open so a Retry rereads its results; a failed one is closed so a Retry starts it again.
+   */
+  listForApplication(applicationId: number): Promise<ApplicationActorRun[]>;
   /** Closes the run, whether its results were saved or it failed and had none. */
   close(runId: string, closedAt: Date): Promise<void>;
   lastToken(): Promise<string | undefined>;
@@ -163,13 +181,47 @@ export interface JobPageReader {
 }
 
 export type Company = { name: string; linkedinUrl: string };
+export type SavedCompany = Company & { id: number };
 
 export interface CompanyStore {
   /** The Company with this LinkedIn page, created when there's none yet. Returns its ID. */
   findOrCreate(company: Company): Promise<number>;
+  get(id: number): Promise<SavedCompany | undefined>;
 }
 
 export type SearchResult = { url: string; title: string };
+
+/** A person the employees actor found at a Company. */
+export type Person = { name: string; headline: string; profileUrl: string };
+export type EmployeeSearch = { companyUrl: string; jobFunction: JobFunction; maxEmployees: number };
+/** The email actor's answer for one profile. Its URL may be normalized differently from the one looked up. */
+export type FoundEmail = { profileUrl: string; email: string | null };
+
+/** One Apify actor: started without waiting, polled for its status, then read. */
+export interface ActorGateway<Input, Result> {
+  actor: string;
+  start(input: Input, token: string): Promise<string>;
+  status(run: ActorRun): Promise<ActorRunStatus>;
+  results(run: ActorRun): Promise<Result[]>;
+}
+
+export type EmployeesActor = ActorGateway<EmployeeSearch, Person>;
+export type EmailsActor = ActorGateway<string[], FoundEmail>;
+
+export type DecisionMaker = typeof decisionMakers.$inferSelect;
+export type FoundPerson = Pick<DecisionMaker, "name" | "headline" | "profileUrl" | "email" | "jobFunction">;
+
+export interface DecisionMakerStore {
+  /**
+   * Saves the people found at the Company, replacing any saved by the same name but keeping a known email when
+   * none was found this time, and dates its People Refresh.
+   */
+  save(companyId: number, people: FoundPerson[], foundAt: Date): Promise<DecisionMaker[]>;
+  listForCompany(companyId: number): Promise<DecisionMaker[]>;
+  /** Makes them the Application's Decision Makers. */
+  addToApplication(applicationId: number, decisionMakerIds: number[]): Promise<void>;
+  listForApplication(applicationId: number): Promise<DecisionMaker[]>;
+}
 
 export interface CompanyPageSearch {
   /** The web search's first result only. Null when there's none. Throws when the search fails. */

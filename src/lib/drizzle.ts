@@ -1,8 +1,11 @@
-import { and, asc, desc, eq, getTableColumns, gt, isNull, lte } from "drizzle-orm";
+import { and, asc, desc, eq, getTableColumns, gt, isNull, lte, sql } from "drizzle-orm";
 import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import type {
   ActorRun,
+  ApplicationActorRun,
+  DecisionMakerStore,
+  FoundPerson,
   ApplicationChanges,
   ApplicationStore,
   Company,
@@ -26,8 +29,10 @@ import type {
 } from "./gateways";
 import {
   actorRuns,
+  applicationRecipients,
   applications,
   companies,
+  decisionMakers,
   excludedKeywords,
   functionRuns,
   googleConnection,
@@ -197,7 +202,7 @@ export function drizzleExcludedKeywordStore(databaseUrl: string): ExcludedKeywor
 
 export function drizzleActorRunStore(databaseUrl: string): ActorRunStore {
   return {
-    async save(run: ActorRun) {
+    async save(run: ActorRun | ApplicationActorRun) {
       await client(databaseUrl).insert(actorRuns).values(run);
     },
 
@@ -211,8 +216,24 @@ export function drizzleActorRunStore(databaseUrl: string): ActorRunStore {
           startedAt: actorRuns.startedAt,
         })
         .from(actorRuns)
-        .where(isNull(actorRuns.resultsSavedAt))
+        .where(and(isNull(actorRuns.resultsSavedAt), isNull(actorRuns.applicationId)))
         .orderBy(asc(actorRuns.startedAt));
+    },
+
+    async listForApplication(applicationId: number) {
+      const runs = await client(databaseUrl)
+        .select({
+          runId: actorRuns.runId,
+          actor: actorRuns.actor,
+          token: actorRuns.token,
+          search: actorRuns.search,
+          purpose: actorRuns.purpose,
+          startedAt: actorRuns.startedAt,
+        })
+        .from(actorRuns)
+        .where(and(eq(actorRuns.applicationId, applicationId), isNull(actorRuns.resultsSavedAt)))
+        .orderBy(asc(actorRuns.startedAt));
+      return runs.map((run) => ({ ...run, applicationId, purpose: run.purpose ?? "" }));
     },
 
     async close(runId: string, closedAt: Date) {
@@ -352,6 +373,66 @@ export function drizzleCompanyStore(databaseUrl: string): CompanyStore {
         .onConflictDoUpdate({ target: companies.linkedinUrl, set: { linkedinUrl: company.linkedinUrl } })
         .returning({ id: companies.id });
       return saved.id;
+    },
+
+    async get(id: number) {
+      const [company] = await client(databaseUrl)
+        .select({ id: companies.id, name: companies.name, linkedinUrl: companies.linkedinUrl })
+        .from(companies)
+        .where(eq(companies.id, id));
+      return company;
+    },
+  };
+}
+
+export function drizzleDecisionMakerStore(databaseUrl: string): DecisionMakerStore {
+  return {
+    async save(companyId: number, people: FoundPerson[], foundAt: Date) {
+      return client(databaseUrl).transaction(async (tx) => {
+        await tx.update(companies).set({ peopleFoundAt: foundAt }).where(eq(companies.id, companyId));
+        if (people.length === 0) return [];
+        return tx
+          .insert(decisionMakers)
+          .values(people.map((person) => ({ ...person, companyId, foundAt })))
+          .onConflictDoUpdate({
+            target: [decisionMakers.companyId, decisionMakers.name],
+            set: {
+              headline: sql`excluded.headline`,
+              profileUrl: sql`excluded.profile_url`,
+              // A person found again without an email lookup keeps the email already known.
+              email: sql`coalesce(excluded.email, ${decisionMakers.email})`,
+              jobFunction: sql`excluded.job_function`,
+              foundAt: sql`excluded.found_at`,
+            },
+          })
+          .returning();
+      });
+    },
+
+    listForCompany(companyId: number) {
+      return client(databaseUrl)
+        .select()
+        .from(decisionMakers)
+        .where(eq(decisionMakers.companyId, companyId))
+        .orderBy(asc(decisionMakers.id));
+    },
+
+    async addToApplication(applicationId: number, decisionMakerIds: number[]) {
+      // Ignores any already added, so a Retry after a crash here adds each once.
+      await client(databaseUrl)
+        .insert(applicationRecipients)
+        .values(decisionMakerIds.map((decisionMakerId) => ({ applicationId, decisionMakerId })))
+        .onConflictDoNothing();
+    },
+
+    async listForApplication(applicationId: number) {
+      const rows = await client(databaseUrl)
+        .select({ decisionMaker: decisionMakers })
+        .from(applicationRecipients)
+        .innerJoin(decisionMakers, eq(decisionMakers.id, applicationRecipients.decisionMakerId))
+        .where(eq(applicationRecipients.applicationId, applicationId))
+        .orderBy(asc(decisionMakers.id));
+      return rows.map(({ decisionMaker }) => decisionMaker);
     },
   };
 }

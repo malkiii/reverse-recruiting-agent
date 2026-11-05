@@ -1,5 +1,10 @@
 import type {
+  ActorGateway,
   ActorRun,
+  ApplicationActorRun,
+  DecisionMaker,
+  DecisionMakerStore,
+  FoundPerson,
   Application,
   ApplicationChanges,
   ApplicationStore,
@@ -182,14 +187,22 @@ export class FakeExcludedKeywordStore implements ExcludedKeywordStore {
 }
 
 export class FakeActorRunStore implements ActorRunStore {
-  private runs: (ActorRun & { closed: boolean })[] = [];
+  private runs: ((ActorRun | ApplicationActorRun) & { closed: boolean })[] = [];
 
-  async save(run: ActorRun) {
+  async save(run: ActorRun | ApplicationActorRun) {
     this.runs.push({ ...run, closed: false });
   }
 
   async listUnfinished() {
-    return this.runs.filter(({ closed }) => !closed);
+    return this.runs
+      .filter((run) => !run.closed && !("applicationId" in run))
+      .map(({ closed: _, ...run }) => run);
+  }
+
+  async listForApplication(applicationId: number) {
+    return this.runs.flatMap(({ closed, ...run }) =>
+      !closed && "applicationId" in run && run.applicationId === applicationId ? [run] : [],
+    );
   }
 
   async close(runId: string) {
@@ -432,6 +445,10 @@ export class FakeCompanyStore implements CompanyStore {
     this.companies.push({ ...company, id });
     return id;
   }
+
+  async get(id: number) {
+    return this.companies.find((company) => company.id === id);
+  }
 }
 
 /** Returns the first result set for each query, and none for any other. */
@@ -442,5 +459,84 @@ export class FakeCompanyPageSearch implements CompanyPageSearch {
   async firstResult(query: string) {
     this.queries.push(query);
     return this.results.get(query) ?? null;
+  }
+}
+
+/**
+ * One actor: each run returns the results set for its input, or none, and reports the statuses queued for its
+ * input in turn, staying on the last. Inputs are matched as JSON.
+ */
+export class FakeActor<Input, Result> implements ActorGateway<Input, Result> {
+  started: { runId: string; input: Input; token: string }[] = [];
+  private resultsByInput = new Map<string, Result[]>();
+  statuses = new Map<string, ActorRunStatus[]>();
+  private polls = new Map<string, number>();
+
+  constructor(public actor: string) {}
+
+  /** Sets what a run with this input returns. */
+  returns(input: Input, results: Result[]) {
+    this.resultsByInput.set(JSON.stringify(input), results);
+  }
+
+  get inputs() {
+    return this.started.map(({ input }) => input);
+  }
+
+  private inputOf(runId: string) {
+    const run = this.started.find((started) => started.runId === runId);
+    if (!run) throw new Error(`${this.actor} never started run ${runId}`);
+    return JSON.stringify(run.input);
+  }
+
+  async start(input: Input, token: string) {
+    const runId = `${this.actor}-run-${this.started.length + 1}`;
+    this.started.push({ runId, input, token });
+    return runId;
+  }
+
+  async status({ runId }: ActorRun) {
+    const statuses = this.statuses.get(this.inputOf(runId)) ?? ["succeeded"];
+    const polls = this.polls.get(runId) ?? 0;
+    this.polls.set(runId, polls + 1);
+    return statuses[Math.min(polls, statuses.length - 1)];
+  }
+
+  async results({ runId }: ActorRun) {
+    return this.resultsByInput.get(this.inputOf(runId)) ?? [];
+  }
+}
+
+export class FakeDecisionMakerStore implements DecisionMakerStore {
+  saved: DecisionMaker[] = [];
+  peopleFoundAt = new Map<number, Date>();
+  recipients: { applicationId: number; decisionMakerId: number }[] = [];
+
+  async save(companyId: number, people: FoundPerson[], foundAt: Date) {
+    const result: DecisionMaker[] = [];
+    for (const person of people) {
+      const existing = this.saved.find((saved) => saved.companyId === companyId && saved.name === person.name);
+      const email = person.email ?? existing?.email ?? null;
+      const decisionMaker = { ...person, email, companyId, foundAt, id: existing?.id ?? this.saved.length + 1 };
+      this.saved = existing
+        ? this.saved.map((saved) => (saved.id === existing.id ? decisionMaker : saved))
+        : [...this.saved, decisionMaker];
+      result.push(decisionMaker);
+    }
+    this.peopleFoundAt.set(companyId, foundAt);
+    return result;
+  }
+
+  async listForCompany(companyId: number) {
+    return this.saved.filter((saved) => saved.companyId === companyId);
+  }
+
+  async addToApplication(applicationId: number, decisionMakerIds: number[]) {
+    this.recipients.push(...decisionMakerIds.map((decisionMakerId) => ({ applicationId, decisionMakerId })));
+  }
+
+  async listForApplication(applicationId: number) {
+    const ids = this.recipients.filter((recipient) => recipient.applicationId === applicationId);
+    return ids.flatMap(({ decisionMakerId }) => this.saved.filter(({ id }) => id === decisionMakerId));
   }
 }
