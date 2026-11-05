@@ -30,6 +30,7 @@ import { FUNCTION_TIME_LIMITS_MS } from "../lib/function-runs";
 import { runCollection } from "../lib/job-collection";
 import { linkedInJobBoard } from "../lib/linkedin-job-board";
 import { llmGateway } from "../lib/llm";
+import { pdfReader } from "../lib/pdf";
 import { COLLECT_JOBS, PREPARE_APPLICATION } from "../lib/schema";
 import { telegramGateway } from "../lib/telegram";
 import { InvalidFunctionRequestError } from "./accept-function-request";
@@ -130,5 +131,6 @@ export function functionServices() {
     resumeFolder: drizzleResumeFolderStore(DATABASE_URL),
     drive: async () => googleDrive(await accessToken()),
     llm: async () => llmGateway(await llmSettings.get(), llmApiKeys),
+    pdfs: pdfReader,
   };
 }

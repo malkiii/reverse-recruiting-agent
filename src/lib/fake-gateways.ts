@@ -14,6 +14,7 @@ import type {
   DriveFile,
   DriveFolder,
   DriveGateway,
+  PdfReader,
   JobPageReader,
   LlmChoice,
   LlmGateway,
@@ -340,6 +341,8 @@ export class FakeApplicationStore implements ApplicationStore {
       resumeName: null,
       resumeLink: null,
       companyId: null,
+      subject: null,
+      coverLetter: null,
       createdAt,
     });
     return id;
@@ -353,6 +356,13 @@ export class FakeApplicationStore implements ApplicationStore {
     const application = this.applications.find((saved) => saved.id === id);
     if (application?.status !== "failed") return false;
     await this.update(id, { status: "preparing", error: null });
+    return true;
+  }
+
+  async cancel(id: number) {
+    const application = this.applications.find((saved) => saved.id === id);
+    if (application?.status !== "in-review") return false;
+    await this.update(id, { status: "cancelled" });
     return true;
   }
 
@@ -408,6 +418,22 @@ export class FakeDrive implements DriveGateway {
 
   async isSharedByLink(folderId: string) {
     return this.sharedByLink.has(folderId);
+  }
+
+  /** Each file's contents are its ID, as text, unless set here. */
+  contents = new Map<string, string>();
+  downloads: string[] = [];
+
+  async download(fileId: string) {
+    this.downloads.push(fileId);
+    return new TextEncoder().encode(this.contents.get(fileId) ?? fileId);
+  }
+}
+
+/** Reads a "PDF" as the text it encodes. */
+export class FakePdfReader implements PdfReader {
+  async toMarkdown(pdf: Uint8Array) {
+    return new TextDecoder().decode(pdf);
   }
 }
 

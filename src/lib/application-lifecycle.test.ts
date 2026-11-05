@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { prepare, retry, runPreparation } from "./application-lifecycle";
+import { cancel, prepare, retry, runPreparation } from "./application-lifecycle";
 import {
   FakeActor,
   FakeActorRunStore,
@@ -11,6 +11,7 @@ import {
   FakeJobPages,
   FakeJobStore,
   FakeLlm,
+  FakePdfReader,
   FakeResumeFolderStore,
   FakeSkippedApifyTokenStore,
 } from "./fake-gateways";
@@ -53,6 +54,8 @@ async function setup() {
   const jobs = new FakeJobStore();
   await jobs.save([linkedInJob, feedJob]);
   const drive = new FakeDrive();
+  drive.sharedByLink.add("folder");
+  drive.contents.set("file-Backend Engineer Resume.pdf", "# Jane Doe\nGo engineer, 5 years of payment APIs.");
   drive.files.set("folder", [pdf("Backend Engineer Resume.pdf"), pdf("Data Analyst CV.pdf"), pdf("Notes.pdf")]);
   const llm = new FakeLlm();
   const companyPageSearch = new FakeCompanyPageSearch();
@@ -71,6 +74,7 @@ async function setup() {
     apifyTokens: "token-a,token-b",
     skippedApifyTokens: new FakeSkippedApifyTokenStore(),
     sleep: async () => {},
+    pdfs: new FakePdfReader(),
     drive: async () => drive,
     llm: async () => llm,
     now: () => now,
@@ -94,6 +98,11 @@ const answer = {
   jobLocation: "Berlin, Germany",
   resumeFilename: "Backend Engineer Resume.pdf",
   jobSummary: "Acme needs a backend engineer to build payment APIs in Go.",
+};
+
+const letter = {
+  subject: "Backend Engineer at Acme",
+  coverLetter: "Hi {{name}},\n\nI build payment APIs in Go.\n\nMy Resume: {{resume_link}}",
 };
 
 test("Prepare uses a Job Board Job's collected description and saves the Resume and Job Summary the LLM chose", async () => {
@@ -373,7 +382,7 @@ function emails(deps: Deps, names: string[], withEmail: string[]) {
 
 /** Prepares the LinkedIn Job through to the Decision Maker search. */
 async function prepareToDecisionMakers(deps: Deps) {
-  deps.fakeLlm.answers.push(answer);
+  deps.fakeLlm.answers.push(answer, letter);
   const id = (await prepare(deps, 1))!;
   await runPreparation(deps, id);
   return id;
@@ -402,8 +411,7 @@ test("Decision Makers are searched function by function until 4 have emails, ask
   expect(names(await deps.decisionMakers.listForApplication(id))).toEqual(["Ann", "Bob", "Cy", "Eve"]);
   expect(names(await deps.decisionMakers.listForCompany(1))).toEqual(["Ann", "Bob", "Cy", "Dee", "Eve", "Fay"]);
   expect(await deps.applications.get(id)).toMatchObject({
-    status: "preparing",
-    currentStep: "write-cover-letter",
+    status: "in-review",
     error: null,
   });
 });
@@ -448,7 +456,7 @@ test("the search stops with 1-3 Decision Makers once all 5 functions are done, w
 
   expect(deps.employeesActor.inputs).toEqual([search("12"), search("9"), search("18"), search("19"), search("20")]);
   expect(names(await deps.decisionMakers.listForApplication(id))).toEqual(["Ann", "Cy"]);
-  expect(await deps.applications.get(id)).toMatchObject({ status: "preparing", currentStep: "write-cover-letter" });
+  expect(await deps.applications.get(id)).toMatchObject({ status: "in-review" });
 });
 
 test("any is searched once, last, when nobody with an email was found in the 5 functions", async () => {
@@ -504,7 +512,7 @@ test("a Retry resumes the actor run still going instead of starting another", as
   // Still running after every poll the Function has, then done by the Retry.
   deps.employeesActor.statuses.set(JSON.stringify(search("12")), [...Array(121).fill("running"), "succeeded"]);
 
-  deps.fakeLlm.answers.push(answer);
+  deps.fakeLlm.answers.push(answer, letter);
   const id = (await prepare(deps, 1))!;
   await expect(runPreparation(deps, id)).rejects.toThrow("is still running");
   expect(await deps.applications.get(id)).toMatchObject({
@@ -516,8 +524,9 @@ test("a Retry resumes the actor run still going instead of starting another", as
   await runPreparation(deps, id);
 
   expect(deps.employeesActor.started).toHaveLength(1);
-  expect(deps.fakeLlm.requests).toHaveLength(1);
-  expect(await deps.applications.get(id)).toMatchObject({ status: "preparing", currentStep: "write-cover-letter" });
+  // LLM request 1 isn't asked again: only the Cover Letter is written after the Retry.
+  expect(deps.fakeLlm.requests).toHaveLength(2);
+  expect(await deps.applications.get(id)).toMatchObject({ status: "in-review" });
 });
 
 test("a Retry rereads finished runs and starts again only the run that failed", async () => {
@@ -527,7 +536,7 @@ test("a Retry rereads finished runs and starts again only the run that failed", 
   employees(deps, "9", ["Bob"]);
   emails(deps, ["Bob"], ["Bob"]);
   deps.employeesActor.statuses.set(JSON.stringify(search("9")), ["failed"]);
-  deps.fakeLlm.answers.push(answer);
+  deps.fakeLlm.answers.push(answer, letter);
   const id = (await prepare(deps, 1))!;
   await expect(runPreparation(deps, id)).rejects.toThrow("failed: Retry to start it again");
   expect(await deps.applications.get(id)).toMatchObject({ status: "failed" });
@@ -590,7 +599,7 @@ test("saved people under 6 months old are reused with no actor runs, skipping th
   expect(deps.employeesActor.started).toEqual([]);
   expect(deps.emailsActor.started).toEqual([]);
   expect(names(await deps.decisionMakers.listForApplication(id))).toEqual(["Bob", "Cy"]);
-  expect(await deps.applications.get(id)).toMatchObject({ status: "preparing", currentStep: "write-cover-letter" });
+  expect(await deps.applications.get(id)).toMatchObject({ status: "in-review" });
 });
 
 test("saved people 6 months old trigger a People Refresh, which chooses only from the people found again", async () => {
@@ -667,4 +676,117 @@ test("newly found people in Cooldown are left out after the search, stopping the
     currentStep: "find-decision-makers",
     error: "Every Decision Maker is in Cooldown, emailed: Ann 2 days ago",
   });
+});
+
+
+/** The Admin's saved Decision Makers at Acme, so the search runs no actors. */
+async function saveAcmePeople(deps: Deps) {
+  const companyId = await deps.companies.findOrCreate({ name: "Acme", linkedinUrl: acmePage.url });
+  await deps.decisionMakers.save(
+    companyId,
+    [{ ...person("Ann"), email: "ann@acme.com", jobFunction: "12" }],
+    new Date("2026-11-01T00:00:00Z"),
+  );
+}
+
+test("once Decision Makers are found, LLM request 2 writes the subject and Cover Letter from the Job Summary and Resume, then the Application is in Review", async () => {
+  const deps = await setup();
+  await saveAcmePeople(deps);
+  deps.fakeLlm.answers.push(answer, letter);
+  const id = (await prepare(deps, 1))!;
+
+  await runPreparation(deps, id);
+
+  expect(deps.fakeLlm.requests).toHaveLength(2);
+  const { prompt } = deps.fakeLlm.requests[1];
+  expect(prompt).toContain(`<job_summary>\n${answer.jobSummary}\n</job_summary>`);
+  expect(prompt).toContain("<resume>\n# Jane Doe\nGo engineer, 5 years of payment APIs.\n</resume>");
+  expect(deps.fakeDrive.downloads).toEqual(["file-Backend Engineer Resume.pdf"]);
+  expect(await deps.applications.get(id)).toMatchObject({
+    status: "in-review",
+    error: null,
+    subject: letter.subject,
+    coverLetter: letter.coverLetter,
+  });
+});
+
+test("the Cover Letter isn't written when no Decision Maker is found, so the Application doesn't pay for it", async () => {
+  const deps = await setup();
+  for (const jobFunction of ["12", "9", "18", "19", "20", "any"] as const) employees(deps, jobFunction, []);
+  deps.fakeLlm.answers.push(answer, letter);
+  const id = (await prepare(deps, 1))!;
+
+  await runPreparation(deps, id);
+
+  expect(await deps.applications.get(id)).toMatchObject({ status: "no-contacts", subject: null, coverLetter: null });
+  expect(deps.fakeLlm.requests).toHaveLength(1);
+  expect(deps.fakeDrive.downloads).toEqual([]);
+});
+
+test.each([
+  ["no {{name}}", "Hi there,\n\nI build APIs.\n\n{{resume_link}}"],
+  ["{{name}} after the first line", "Hi,\n{{name}}, I build APIs.\n\n{{resume_link}}"],
+  ["no {{resume_link}}", "Hi {{name}},\n\nI build APIs."],
+  ["{{resume_link}} before the end", "Hi {{name}},\n\n{{resume_link}}\n\nThanks!"],
+])("a Cover Letter with %s fails the Application before Review", async (_, coverLetter) => {
+  const deps = await setup();
+  await saveAcmePeople(deps);
+  deps.fakeLlm.answers.push(answer, { ...letter, coverLetter });
+  const id = (await prepare(deps, 1))!;
+
+  await runPreparation(deps, id);
+
+  expect(await deps.applications.get(id)).toMatchObject({
+    status: "failed",
+    currentStep: "write-cover-letter",
+    coverLetter: null,
+    error: "The LLM's Cover Letter is missing {{name}} in its first line or {{resume_link}} at its end",
+  });
+});
+
+test("a Resume Folder not shared by link stops the Application before Review, and a Retry after sharing doesn't write the letter again", async () => {
+  const deps = await setup();
+  await saveAcmePeople(deps);
+  deps.fakeDrive.sharedByLink.clear();
+  deps.fakeLlm.answers.push(answer, letter);
+  const id = (await prepare(deps, 1))!;
+
+  await runPreparation(deps, id);
+  expect(await deps.applications.get(id)).toMatchObject({
+    status: "failed",
+    currentStep: "check-sharing",
+    coverLetter: letter.coverLetter,
+    error: 'Your Resume Folder "Resumes" isn\'t shared as "Anyone with the link": share it, then Retry',
+  });
+
+  deps.fakeDrive.sharedByLink.add("folder");
+  await retry(deps, id);
+  await runPreparation(deps, id);
+
+  expect(await deps.applications.get(id)).toMatchObject({ status: "in-review", error: null });
+  expect(deps.fakeLlm.requests).toHaveLength(2);
+});
+
+test("Cancel is final: a cancelled Application can't be cancelled, retried or Prepared again", async () => {
+  const deps = await setup();
+  await saveAcmePeople(deps);
+  deps.fakeLlm.answers.push(answer, letter);
+  const id = (await prepare(deps, 1))!;
+  await runPreparation(deps, id);
+
+  expect(await cancel(deps, id)).toBe(true);
+  expect(await cancel(deps, id)).toBe(false);
+  expect(await retry(deps, id)).toBeNull();
+  expect(await prepare(deps, 1)).toBeNull();
+  await runPreparation(deps, id);
+
+  expect(await deps.applications.list()).toMatchObject([{ id, status: "cancelled" }]);
+});
+
+test("only an Application in Review can be cancelled", async () => {
+  const deps = await setup();
+  const id = (await prepare(deps, 1))!;
+
+  expect(await cancel(deps, id)).toBe(false);
+  expect(await deps.applications.get(id)).toMatchObject({ status: "preparing" });
 });

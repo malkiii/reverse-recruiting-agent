@@ -65,6 +65,13 @@ export interface DriveGateway {
   listFiles(folderId: string): Promise<DriveFile[]>;
   /** Whether the folder is shared as "Anyone with the link", so its Resume links open for recipients. */
   isSharedByLink(folderId: string): Promise<boolean>;
+  /** The file's bytes, such as a Resume PDF. */
+  download(fileId: string): Promise<Uint8Array>;
+}
+
+export interface PdfReader {
+  /** The PDF's text as markdown, read without the LLM. Throws when it isn't a readable PDF. */
+  toMarkdown(pdf: Uint8Array): Promise<string>;
 }
 
 export interface GoogleOAuthGateway {
@@ -172,6 +179,8 @@ export interface ApplicationStore {
   get(id: number): Promise<Application | undefined>;
   /** Atomically sets a failed Application back to preparing, clearing its error. False when it isn't failed. */
   retry(id: number): Promise<boolean>;
+  /** Atomically sets an Application in Review to cancelled. False when it isn't in Review. */
+  cancel(id: number): Promise<boolean>;
   update(id: number, changes: ApplicationChanges): Promise<void>;
 }
 

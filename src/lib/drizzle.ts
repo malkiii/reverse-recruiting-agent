@@ -376,6 +376,16 @@ export function drizzleApplicationStore(databaseUrl: string): ApplicationStore {
       return retried.length > 0;
     },
 
+    async cancel(id: number) {
+      // Only an Application in Review matches, so Cancel can't undo a Send or a Prepare.
+      const cancelled = await client(databaseUrl)
+        .update(applications)
+        .set({ status: "cancelled" })
+        .where(and(eq(applications.id, id), eq(applications.status, "in-review")))
+        .returning({ id: applications.id });
+      return cancelled.length > 0;
+    },
+
     async update(id: number, changes: ApplicationChanges) {
       await client(databaseUrl).update(applications).set(changes).where(eq(applications.id, id));
     },

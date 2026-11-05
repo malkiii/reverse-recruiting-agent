@@ -107,5 +107,13 @@ export function googleDrive(accessToken: string): DriveGateway {
       const { permissions = [] } = await get<{ permissions?: { type: string; role: string }[] }>(url);
       return permissions.some(({ type }) => type === "anyone");
     },
+
+    async download(fileId: string) {
+      const url = new URL(`${DRIVE_FILES_URL}/${encodeURIComponent(fileId)}`);
+      url.searchParams.set("alt", "media");
+      const response = await fetch(url, { headers: { authorization: `Bearer ${accessToken}` } });
+      if (!response.ok) throw new Error(`Google Drive refused the download: ${response.status} ${await response.text()}`);
+      return new Uint8Array(await response.arrayBuffer());
+    },
   };
 }

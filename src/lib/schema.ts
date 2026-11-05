@@ -39,6 +39,7 @@ export const PREPARE_STEPS = [
   "find-company-page",
   "find-decision-makers",
   "write-cover-letter",
+  "check-sharing",
 ] as const;
 
 /** LinkedIn job function IDs the employees actor filters by, as its currentFunction input. */
@@ -210,6 +211,9 @@ export const applications = pgTable("applications", {
   resumeName: text("resume_name"),
   resumeLink: text("resume_link"),
   companyId: bigint("company_id", { mode: "number" }).references(() => companies.id),
+  subject: text(),
+  /** Contains {{name}} in its first line and {{resume_link}} at its end, filled in for each Decision Maker. */
+  coverLetter: text("cover_letter"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
 }).enableRLS();
 

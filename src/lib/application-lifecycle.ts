@@ -10,6 +10,7 @@ import type {
   JobPageReader,
   JobStore,
   LlmGateway,
+  PdfReader,
   ResumeFolderStore,
   SavedJob,
 } from "./gateways";
@@ -34,6 +35,8 @@ export type PrepareDeps = ClaimDeps &
     drive: () => Promise<DriveGateway>;
     /** The LLM the Admin chose in settings. */
     llm: () => Promise<LlmGateway>;
+    /** Reads the chosen Resume PDF as markdown, without the LLM. */
+    pdfs: PdfReader;
     companies: CompanyStore;
     companyPageSearch: CompanyPageSearch;
   };
@@ -47,6 +50,11 @@ export async function prepare({ jobs, applications, now }: ClaimDeps, jobId: num
 /** The Admin's Retry of a failed Application, resumed from its current step. Null when it isn't failed. */
 export async function retry({ applications }: Pick<ClaimDeps, "applications">, applicationId: number) {
   return (await applications.retry(applicationId)) ? applicationId : null;
+}
+
+/** The Admin's Cancel at Review: final, and the Job's one Application stays, so the Job can't be Prepared again. */
+export async function cancel({ applications }: Pick<ClaimDeps, "applications">, applicationId: number) {
+  return applications.cancel(applicationId);
 }
 
 const xml = (tag: string, content: string) => `<${tag}>\n${content}\n</${tag}>`;
@@ -191,6 +199,65 @@ async function checkSavedPeopleCooldown(deps: PrepareDeps, job: SavedJob) {
   if (reason) throw new Stop(reason, "all-in-cooldown");
 }
 
+const NAME_PLACEHOLDER = "{{name}}";
+const RESUME_LINK_PLACEHOLDER = "{{resume_link}}";
+
+const WRITE_COVER_LETTER_INSTRUCTIONS = [
+  "You help a job seeker apply to a job by emailing the people who can hire them.",
+  "Write an email subject and a short, specific cover letter for the job, from the job summary and the resume.",
+  "Only claim experience and skills the resume supports.",
+  `Start the first line with a greeting to ${NAME_PLACEHOLDER}, which is replaced with each recipient's name.`,
+  `End the letter with ${RESUME_LINK_PLACEHOLDER}, which is replaced with the link to the resume.`,
+  "Write plain text, without markdown.",
+].join(" ");
+
+const writeCoverLetterSchema = z.object({ subject: z.string(), coverLetter: z.string() });
+
+/** Whether a Cover Letter has {{name}} in its first line and ends with {{resume_link}}, so every email can be filled in. */
+function hasPlaceholders(coverLetter: string) {
+  const text = coverLetter.trim();
+  return text.split("\n")[0].includes(NAME_PLACEHOLDER) && text.endsWith(RESUME_LINK_PLACEHOLDER);
+}
+
+/** The chosen Resume PDF, read as markdown without the LLM. */
+async function readResume(deps: PrepareDeps, resumeFileId: string) {
+  const pdf = await (await deps.drive()).download(resumeFileId);
+  const markdown = (await deps.pdfs.toMarkdown(pdf)).trim();
+  if (!markdown) throw new Stop("Your Resume has no text to read: export it as a PDF with selectable text");
+  return markdown;
+}
+
+/** LLM request 2: the Job Summary and Resume markdown, for a subject and a Cover Letter with its placeholders. */
+async function writeCoverLetter(deps: PrepareDeps, id: number) {
+  const application = await deps.applications.get(id);
+  const { jobSummary, resumeFileId } = application ?? {};
+  if (!jobSummary || !resumeFileId) throw new Error(`Application ${id} has no Job Summary or Resume`);
+
+  const prompt = [xml("job_summary", jobSummary), xml("resume", await readResume(deps, resumeFileId))].join("\n\n");
+  const written = await (await deps.llm()).generate({
+    instructions: WRITE_COVER_LETTER_INSTRUCTIONS,
+    prompt,
+    schema: writeCoverLetterSchema,
+  });
+  const coverLetter = written.coverLetter.trim();
+  if (!hasPlaceholders(coverLetter)) {
+    throw new Stop(
+      `The LLM's Cover Letter is missing ${NAME_PLACEHOLDER} in its first line or ${RESUME_LINK_PLACEHOLDER} at its end`,
+    );
+  }
+  return { subject: written.subject.trim(), coverLetter };
+}
+
+/** Stops before Review when the Resume Folder isn't shared by link, so a recipient never gets a dead Resume link. */
+async function checkSharing(deps: PrepareDeps) {
+  const folder = await deps.resumeFolder.get();
+  if (!folder) throw new Stop("No Resume Folder is chosen: choose one on the dashboard's Google page");
+  const drive = await deps.drive();
+  if (!(await drive.isSharedByLink(folder.id))) {
+    throw new Stop(`Your Resume Folder "${folder.name}" isn't shared as "Anyone with the link": share it, then Retry`);
+  }
+}
+
 async function runSteps(deps: PrepareDeps, application: Application) {
   const { id } = application;
   const job = await deps.jobs.get(application.jobId);
@@ -235,6 +302,19 @@ async function runSteps(deps: PrepareDeps, application: Application) {
     console.log(
       `Application ${id}: chose ${choice.decisionMakers.length} Decision Maker(s): ${choice.decisionMakers.map(describePerson).join(", ")}`,
     );
+  }
+
+  if (step === "write-cover-letter") {
+    const written = await writeCoverLetter(deps, id);
+    step = "check-sharing";
+    await deps.applications.update(id, { ...written, currentStep: step });
+    console.log(`Application ${id}: wrote the Cover Letter`);
+  }
+
+  if (step === "check-sharing") {
+    await checkSharing(deps);
+    await deps.applications.update(id, { status: "in-review" });
+    console.log(`Application ${id}: in Review`);
   }
 }
 
