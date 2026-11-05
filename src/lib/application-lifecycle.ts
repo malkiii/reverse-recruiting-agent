@@ -13,7 +13,12 @@ import type {
   ResumeFolderStore,
   SavedJob,
 } from "./gateways";
-import { chooseDecisionMakers, type DecisionMakerSearchDeps, savedPeopleCooldownReason } from "./decision-maker-search";
+import {
+  chooseDecisionMakers,
+  type DecisionMakerSearchDeps,
+  describePerson,
+  savedPeopleCooldownReason,
+} from "./decision-maker-search";
 import { FEED_SOURCE_PREFIX } from "./firecrawl-job-feed";
 import { resumesIn } from "./resumes";
 
@@ -155,17 +160,26 @@ type CompanySearchDetails = Pick<Application, "industryKeywords" | "jobLocation"
  * The Company's LinkedIn page: the one saved on the Job, otherwise a search's first result when its title matches.
  * Ends as Direct Apply when the page can't be confirmed. Returns the Company's ID.
  */
-async function findCompany(deps: PrepareDeps, job: SavedJob, { industryKeywords, jobLocation }: CompanySearchDetails) {
+async function findCompany(
+  deps: PrepareDeps,
+  id: number,
+  job: SavedJob,
+  { industryKeywords, jobLocation }: CompanySearchDetails,
+) {
   let linkedinUrl = job.companyLinkedinUrl;
   if (!linkedinUrl) {
     const where = jobLocation ? ["in", jobLocation] : [];
     const query = [job.companyName, ...(industryKeywords ?? []), ...where, "site:linkedin.com/company"].join(" ");
+    console.log(`Application ${id}: searching for the Company page: "${query}"`);
     const result = await deps.companyPageSearch.firstResult(query);
     if (!result || !namesMatch(job.companyName, result.title)) {
       console.log(`Company page search "${query}": no match in ${JSON.stringify(result)}`);
       throw new Stop("The Company's LinkedIn page couldn't be confirmed, so apply through the Job link", "direct-apply");
     }
     linkedinUrl = result.url;
+    console.log(`Application ${id}: search found "${result.title}" ${result.url}`);
+  } else {
+    console.log(`Application ${id}: Company page from the Job: ${linkedinUrl}`);
   }
   return deps.companies.findOrCreate({ name: job.companyName, linkedinUrl });
 }
@@ -202,7 +216,7 @@ async function runSteps(deps: PrepareDeps, application: Application) {
 
   let { companyId } = application;
   if (step === "find-company-page") {
-    companyId = await findCompany(deps, job, details);
+    companyId = await findCompany(deps, id, job, details);
     step = "find-decision-makers";
     await deps.applications.update(id, { companyId, currentStep: step });
     console.log(`Application ${id}: found Company ${companyId}`);
@@ -218,7 +232,9 @@ async function runSteps(deps: PrepareDeps, application: Application) {
     if (choice.outcome === "all-in-cooldown") throw new Stop(choice.reason, "all-in-cooldown");
     step = "write-cover-letter";
     await deps.applications.update(id, { currentStep: step });
-    console.log(`Application ${id}: chose ${choice.decisionMakers.length} Decision Maker(s)`);
+    console.log(
+      `Application ${id}: chose ${choice.decisionMakers.length} Decision Maker(s): ${choice.decisionMakers.map(describePerson).join(", ")}`,
+    );
   }
 }
 

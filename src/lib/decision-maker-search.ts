@@ -17,6 +17,14 @@ export const DECISION_MAKERS_PER_APPLICATION = 4;
 
 /** Human Resources, Entrepreneurship, Operations, Product Management, then Program & Project Management. */
 const FUNCTION_ORDER: JobFunction[] = ["12", "9", "18", "19", "20"];
+const FUNCTION_NAMES: Record<JobFunction, string> = {
+  "12": "Human Resources",
+  "9": "Entrepreneurship",
+  "18": "Operations",
+  "19": "Product Management",
+  "20": "Program & Project Management",
+  any: "Any",
+};
 const POLL_DELAY_MS = 10_000;
 // 20 minutes, well inside prepare-application's time limit with the earlier steps. A Retry resumes the run still going.
 const MAX_POLLS = 120;
@@ -33,6 +41,10 @@ export type DecisionMakerSearchDeps = {
 };
 
 type SearchedCompany = { id: number; linkedinUrl: string };
+
+/** A person for the logs: name and email. */
+export const describePerson = ({ name, email }: { name: string; email: string | null }) =>
+  `${name} <${email ?? "no email"}>`;
 
 const nameKey = (name: string) => name.trim().toLowerCase();
 
@@ -128,7 +140,8 @@ async function searchPeople(deps: DecisionMakerSearchDeps, applicationId: number
       }
     }
     console.log(
-      `Application ${applicationId}: function ${jobFunction} found ${people.length} new people, ${withEmail()} with emails so far`,
+      `Application ${applicationId}: function ${jobFunction} (${FUNCTION_NAMES[jobFunction]}) found ${people.length} new people, ${withEmail()} with emails so far` +
+        (people.length > 0 ? `: ${people.map(describePerson).join(", ")}` : ""),
     );
   }
 
