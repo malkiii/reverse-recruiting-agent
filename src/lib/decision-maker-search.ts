@@ -155,7 +155,8 @@ async function searchPeople(deps: DecisionMakerSearchDeps, applicationId: number
 }
 
 const DAY_MS = 24 * 60 * 60_000;
-const COOLDOWN_MS = 30 * DAY_MS;
+export const COOLDOWN_DAYS = 30;
+const COOLDOWN_MS = COOLDOWN_DAYS * DAY_MS;
 const PEOPLE_REFRESH_MONTHS = 6;
 
 /** Whether people found at this time are still current, or due a People Refresh. */

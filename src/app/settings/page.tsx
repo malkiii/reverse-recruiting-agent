@@ -2,6 +2,7 @@ import { revalidatePath } from "next/cache";
 import Link from "next/link";
 import { connection } from "next/server";
 import {
+  cleanUpOldData,
   drizzleExcludedKeywordStore,
   drizzleJobBoardSettingsStore,
   drizzleJobFeedStore,
@@ -13,6 +14,7 @@ import { glassdoorJobBoard } from "@/lib/glassdoor-job-board";
 import { linkedInJobBoard } from "@/lib/linkedin-job-board";
 import { LLM_PROVIDER_NAMES, SUGGESTED_MODELS } from "@/lib/llm";
 import { LLM_PROVIDERS, type JobSearch, type LlmProvider } from "@/lib/schema";
+import { CleanUpButton } from "./clean-up-button";
 
 const SEPARATOR = "|";
 
@@ -105,6 +107,12 @@ async function saveLlm(formData: FormData) {
   if (!model) throw new Error("Choose a model");
   await drizzleLlmSettingsStore(databaseUrl()).save({ provider, model });
   revalidatePath("/settings");
+}
+
+async function cleanUp() {
+  "use server";
+
+  return cleanUpOldData(databaseUrl());
 }
 
 export default async function SettingsPage() {
@@ -236,6 +244,13 @@ export default async function SettingsPage() {
         />{" "}
         <button type="submit">Save</button>
       </form>
+
+      <h2>Old Data</h2>
+      <p>
+        Deletes Jobs, Applications with their recipients, Function runs, actor runs and Decision Makers 6 months old or
+        more. Keeps a Job whose Application is newer or still in progress, and Decision Makers in Cooldown.
+      </p>
+      <CleanUpButton cleanUp={cleanUp} />
     </main>
   );
 }

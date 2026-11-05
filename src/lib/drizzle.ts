@@ -1,4 +1,5 @@
-import { and, asc, desc, eq, getTableColumns, gt, isNull, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, getTableColumns, gt, inArray, isNull, lte, ne, notExists, notInArray, or, sql } from "drizzle-orm";
+import { COOLDOWN_DAYS } from "./decision-maker-search";
 import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import type {
@@ -46,6 +47,7 @@ import {
 
 const RUNS_SHOWN = 20;
 const JOBS_SHOWN = 200;
+const OLD_DATA_MONTHS = 6;
 
 let db: PostgresJsDatabase | undefined;
 
@@ -497,3 +499,76 @@ export function listFunctionRunsForApplication(databaseUrl: string, applicationI
     .orderBy(desc(functionRuns.id));
 }
 
+/**
+ * Deletes data 6+ months old: Jobs (with their Applications and recipients), Function runs, actor runs and Decision
+ * Makers. Keeps a Job whose Application is newer or still in progress, running Function runs, and Decision Makers
+ * still in Cooldown or a recipient of a kept Application.
+ */
+export async function cleanUpOldData(databaseUrl: string) {
+  const cutoff = sql`now() - make_interval(months => ${OLD_DATA_MONTHS})`;
+  const cooldownStart = sql`now() - make_interval(days => ${COOLDOWN_DAYS})`;
+
+  return client(databaseUrl).transaction(async (tx) => {
+    const oldApplicationIds = tx
+      .select({ id: applications.id })
+      .from(applications)
+      .innerJoin(jobs, eq(jobs.id, applications.jobId))
+      .where(
+        and(
+          lte(applications.createdAt, cutoff),
+          notInArray(applications.status, ["preparing", "sending"]),
+          lte(jobs.postDay, sql`(${cutoff})::date`),
+        ),
+      );
+
+    const recipients = await tx
+      .delete(applicationRecipients)
+      .where(inArray(applicationRecipients.applicationId, oldApplicationIds))
+      .returning({ applicationId: applicationRecipients.applicationId });
+    const deletedApplications = await tx
+      .delete(applications)
+      .where(inArray(applications.id, oldApplicationIds))
+      .returning({ id: applications.id });
+    const deletedJobs = await tx
+      .delete(jobs)
+      .where(
+        and(
+          lte(jobs.postDay, sql`(${cutoff})::date`),
+          notExists(tx.select({ id: applications.id }).from(applications).where(eq(applications.jobId, jobs.id))),
+        ),
+      )
+      .returning({ id: jobs.id });
+    const deletedFunctionRuns = await tx
+      .delete(functionRuns)
+      .where(and(lte(functionRuns.startedAt, cutoff), ne(functionRuns.status, "running")))
+      .returning({ id: functionRuns.id });
+    const deletedActorRuns = await tx
+      .delete(actorRuns)
+      .where(lte(actorRuns.startedAt, cutoff))
+      .returning({ runId: actorRuns.runId });
+    const deletedDecisionMakers = await tx
+      .delete(decisionMakers)
+      .where(
+        and(
+          lte(decisionMakers.foundAt, cutoff),
+          or(isNull(decisionMakers.lastEmailedAt), lte(decisionMakers.lastEmailedAt, cooldownStart)),
+          notExists(
+            tx
+              .select({ id: applicationRecipients.applicationId })
+              .from(applicationRecipients)
+              .where(eq(applicationRecipients.decisionMakerId, decisionMakers.id)),
+          ),
+        ),
+      )
+      .returning({ id: decisionMakers.id });
+
+    return {
+      jobs: deletedJobs.length,
+      applications: deletedApplications.length,
+      recipients: recipients.length,
+      functionRuns: deletedFunctionRuns.length,
+      actorRuns: deletedActorRuns.length,
+      decisionMakers: deletedDecisionMakers.length,
+    };
+  });
+}
