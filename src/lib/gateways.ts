@@ -152,6 +152,8 @@ export interface ApplicationStore {
   /** Atomically creates the Job's one Application, as preparing. Null when the Job already has one. */
   claim(jobId: number, createdAt: Date): Promise<number | null>;
   get(id: number): Promise<Application | undefined>;
+  /** Atomically sets a failed Application back to preparing, clearing its error. False when it isn't failed. */
+  retry(id: number): Promise<boolean>;
   update(id: number, changes: ApplicationChanges): Promise<void>;
 }
 

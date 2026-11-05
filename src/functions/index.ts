@@ -1,6 +1,6 @@
 import { setTimeout } from "node:timers/promises";
 import { z } from "zod";
-import { prepare, runPreparation } from "../lib/application-lifecycle";
+import { prepare, retry, runPreparation } from "../lib/application-lifecycle";
 import {
   drizzleActorRunStore,
   drizzleApplicationStore,
@@ -40,7 +40,11 @@ type FunctionDefinition = {
   work: (services: Services, applicationId?: number) => Promise<void>;
 };
 
-const prepareRequestSchema = z.object({ jobId: z.number().int().positive() });
+/** A Prepare names the Job; a Retry names the failed Application. */
+const prepareRequestSchema = z.union([
+  z.object({ jobId: z.number().int().positive() }),
+  z.object({ applicationId: z.number().int().positive() }),
+]);
 
 function requireApplication(applicationId: number | undefined) {
   if (applicationId === undefined) throw new Error("No Application was given");
@@ -56,8 +60,12 @@ export const functions = new Map<string, FunctionDefinition>([
       timeLimitMs: FUNCTION_TIME_LIMITS_MS[PREPARE_APPLICATION],
       async claim(services, body) {
         const request = prepareRequestSchema.safeParse(body);
-        if (!request.success) throw new InvalidFunctionRequestError("The request body needs a numeric jobId");
-        return prepare(services, request.data.jobId);
+        if (!request.success) {
+          throw new InvalidFunctionRequestError("The request body needs a numeric jobId or applicationId");
+        }
+        return "jobId" in request.data
+          ? prepare(services, request.data.jobId)
+          : retry(services, request.data.applicationId);
       },
       work: (services, applicationId) => runPreparation(services, requireApplication(applicationId)),
     },

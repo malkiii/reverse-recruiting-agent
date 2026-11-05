@@ -37,6 +37,11 @@ export async function prepare({ jobs, applications, now }: ClaimDeps, jobId: num
   return applications.claim(jobId, now());
 }
 
+/** The Admin's Retry of a failed Application, resumed from its current step. Null when it isn't failed. */
+export async function retry({ applications }: Pick<ClaimDeps, "applications">, applicationId: number) {
+  return (await applications.retry(applicationId)) ? applicationId : null;
+}
+
 const xml = (tag: string, content: string) => `<${tag}>\n${content}\n</${tag}>`;
 
 const CHOOSE_RESUME_INSTRUCTIONS = [

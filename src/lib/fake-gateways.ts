@@ -336,6 +336,13 @@ export class FakeApplicationStore implements ApplicationStore {
     return this.applications.find((application) => application.id === id);
   }
 
+  async retry(id: number) {
+    const application = this.applications.find((saved) => saved.id === id);
+    if (application?.status !== "failed") return false;
+    await this.update(id, { status: "preparing", error: null });
+    return true;
+  }
+
   async list() {
     return this.applications;
   }

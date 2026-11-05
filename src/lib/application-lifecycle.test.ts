@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { prepare, runPreparation } from "./application-lifecycle";
+import { prepare, retry, runPreparation } from "./application-lifecycle";
 import {
   FakeApplicationStore,
   FakeCompanyPageSearch,
@@ -293,6 +293,17 @@ test("a Retry from the Company page step searches again without reading the Job 
 
   expect(deps.fakeLlm.requests).toHaveLength(1);
   expect(await deps.applications.get(id)).toMatchObject({ currentStep: "find-decision-makers", companyId: 1 });
+});
+
+test("Retry resumes only a failed Application, once", async () => {
+  const deps = await setup();
+  const id = (await prepare(deps, 1))!;
+  await deps.applications.update(id, { status: "failed", error: "Firecrawl was down" });
+
+  const claims = await Promise.all([retry(deps, id), retry(deps, id)]);
+
+  expect(claims).toEqual([id, null]);
+  expect(await deps.applications.get(id)).toMatchObject({ status: "preparing", error: null });
 });
 
 test("company suffixes are removed only as whole words, so a name inside another Company's name doesn't match", async () => {

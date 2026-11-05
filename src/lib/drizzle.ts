@@ -326,6 +326,16 @@ export function drizzleApplicationStore(databaseUrl: string): ApplicationStore {
       return application;
     },
 
+    async retry(id: number) {
+      // Only a failed Application matches, so a double click on Retry claims it once.
+      const retried = await client(databaseUrl)
+        .update(applications)
+        .set({ status: "preparing", error: null })
+        .where(and(eq(applications.id, id), eq(applications.status, "failed")))
+        .returning({ id: applications.id });
+      return retried.length > 0;
+    },
+
     async update(id: number, changes: ApplicationChanges) {
       await client(databaseUrl).update(applications).set(changes).where(eq(applications.id, id));
     },

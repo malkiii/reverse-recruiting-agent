@@ -1,10 +1,13 @@
+import { revalidatePath } from "next/cache";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
+import { startFunction } from "@/lib/dashboard-functions";
 import { drizzleApplicationStore, drizzleJobStore, listFunctionRunsForApplication } from "@/lib/drizzle";
 import { parseDashboardEnv } from "@/lib/env";
 import { runAsOf } from "@/lib/function-runs";
 import type { PrepareStep } from "@/lib/gateways";
+import { PREPARE_APPLICATION } from "@/lib/schema";
 
 const STEP_NAMES: Record<PrepareStep, string> = {
   "read-job": "Reading the Job page",
@@ -12,6 +15,15 @@ const STEP_NAMES: Record<PrepareStep, string> = {
   "find-company-page": "Finding the Company's LinkedIn page",
   "find-decision-makers": "Finding Decision Makers",
 };
+
+async function retryApplication(formData: FormData) {
+  "use server";
+
+  const applicationId = Number(formData.get("applicationId"));
+  // A 409 means it's no longer failed, such as after a double click, which the refreshed page shows.
+  await startFunction(PREPARE_APPLICATION, { applicationId });
+  revalidatePath(`/applications/${applicationId}`);
+}
 
 export default async function ApplicationPage({ params }: { params: Promise<{ id: string }> }) {
   await connection();
@@ -52,6 +64,12 @@ export default async function ApplicationPage({ params }: { params: Promise<{ id
           ))}
       </p>
       {application.error && <p role="alert">{application.error}</p>}
+      {application.status === "failed" && (
+        <form action={retryApplication}>
+          <input type="hidden" name="applicationId" value={application.id} />
+          <button type="submit">Retry</button>
+        </form>
+      )}
       {application.status === "direct-apply" && job && (
         <p>
           Apply directly through <a href={job.url}>the Job link</a>
