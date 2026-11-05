@@ -154,6 +154,8 @@ export const settings = pgTable(
     resumeFolderName: text("resume_folder_name"),
     llmProvider: text("llm_provider", { enum: LLM_PROVIDERS }),
     llmModel: text("llm_model"),
+    /** Whether the daily Modal schedule runs Job Collection. */
+    scheduledCollectionEnabled: boolean("scheduled_collection_enabled").notNull().default(false),
   },
   singleRow,
 ).enableRLS();

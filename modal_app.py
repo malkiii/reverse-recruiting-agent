@@ -34,9 +34,10 @@ def prepare_application(run_id: int, application_id: int):
 
 
 # Late in the UTC day, because Job Collection keeps only Jobs posted today.
-# @app.function(timeout=COLLECT_JOBS_TIMEOUT, schedule=modal.Cron("0 22 * * *"))
-# def scheduled_collect_jobs():
-#     subprocess.run([*CLI, "scheduled", "collect-jobs"], cwd=APP_DIR, check=True)
+# It always fires; the CLI does nothing unless the schedule is turned on in Settings.
+@app.function(timeout=COLLECT_JOBS_TIMEOUT, schedule=modal.Cron("0 22 * * *"))
+def scheduled_collect_jobs():
+    subprocess.run([*CLI, "scheduled", "collect-jobs"], cwd=APP_DIR, check=True)
 
 
 @app.function()

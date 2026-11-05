@@ -7,7 +7,8 @@ import { runFunction } from "./run-function";
  *   accept <function>, with the Authorization header in FUNCTION_AUTHORIZATION and the JSON request body in
  *     FUNCTION_BODY, claims the work and prints the response as JSON.
  *   run <function> <runId> [applicationId] does the work and records how it ended.
- *   scheduled <function> claims a run and does the work, for the Modal schedule. It does nothing if one is active.
+ *   scheduled <function> claims a run and does the work, for the Modal schedule. It does nothing if one is active,
+ *     or if the schedule is turned off in Settings.
  */
 async function main() {
   const [command, functionName, runId, applicationId] = process.argv.slice(2);
@@ -32,6 +33,10 @@ async function main() {
   } else if (command === "run") {
     await runFunction(Number(runId), functionName, work, services);
   } else if (command === "scheduled") {
+    if (!(await services.scheduleSettings.collectionEnabled())) {
+      console.log("The schedule is turned off in Settings, so nothing runs.");
+      return;
+    }
     const claimed = await services.runs.start(functionName, services.now(), timeLimitMs);
     if (claimed !== null) await runFunction(claimed, functionName, work, services);
   } else {

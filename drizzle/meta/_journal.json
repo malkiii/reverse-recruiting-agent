@@ -78,6 +78,13 @@
       "when": 1793880222247,
       "tag": "0010_decision_maker_cooldown",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1793893293742,
+      "tag": "0011_scheduled_collection",
+      "breakpoints": true
     }
   ]
 }

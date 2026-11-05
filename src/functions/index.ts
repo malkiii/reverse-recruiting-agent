@@ -8,6 +8,7 @@ import {
   drizzleDecisionMakerStore,
   drizzleLlmSettingsStore,
   drizzleResumeFolderStore,
+  drizzleScheduleSettingsStore,
   drizzleExcludedKeywordStore,
   drizzleFunctionRunStore,
   drizzleGoogleConnectionStore,
@@ -101,6 +102,7 @@ export function functionServices() {
   const llmApiKeys = { claude: ANTHROPIC_API_KEY, gemini: GEMINI_API_KEY, openai: OPENAI_API_KEY, groq: GROQ_API_KEY };
   return {
     runs: drizzleFunctionRunStore(DATABASE_URL),
+    scheduleSettings: drizzleScheduleSettingsStore(DATABASE_URL),
     secret: FUNCTIONS_SECRET,
     now,
     sleep: async (ms: number) => void (await setTimeout(ms)),

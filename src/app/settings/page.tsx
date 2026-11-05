@@ -6,6 +6,7 @@ import {
   drizzleJobBoardSettingsStore,
   drizzleJobFeedStore,
   drizzleLlmSettingsStore,
+  drizzleScheduleSettingsStore,
 } from "@/lib/drizzle";
 import { parseDashboardEnv } from "@/lib/env";
 import { glassdoorJobBoard } from "@/lib/glassdoor-job-board";
@@ -28,6 +29,13 @@ function feedUrl(formData: FormData) {
   const url = String(formData.get("url")).trim();
   if (!URL.canParse(url)) throw new Error(`Not a URL: ${url}`);
   return url;
+}
+
+async function saveSchedule(formData: FormData) {
+  "use server";
+
+  await drizzleScheduleSettingsStore(databaseUrl()).saveCollectionEnabled(formData.get("enabled") === "on");
+  revalidatePath("/settings");
 }
 
 async function saveLinkedIn(formData: FormData) {
@@ -102,12 +110,13 @@ async function saveLlm(formData: FormData) {
 export default async function SettingsPage() {
   await connection();
   const settingsStore = drizzleJobBoardSettingsStore(databaseUrl());
-  const [linkedIn, glassdoor, feeds, excludedKeywords, llm] = await Promise.all([
+  const [linkedIn, glassdoor, feeds, excludedKeywords, llm, scheduledCollection] = await Promise.all([
     settingsStore.get(linkedInJobBoard.source),
     settingsStore.get(glassdoorJobBoard.source),
     drizzleJobFeedStore(databaseUrl()).list(),
     drizzleExcludedKeywordStore(databaseUrl()).list(),
     drizzleLlmSettingsStore(databaseUrl()).get(),
+    drizzleScheduleSettingsStore(databaseUrl()).collectionEnabled(),
   ]);
   const linkedInSearches = linkedIn?.searches.map(({ keywords, location }) => `${keywords} ${SEPARATOR} ${location}`);
   const glassdoorSearch = glassdoor?.searches[0];
@@ -116,6 +125,15 @@ export default async function SettingsPage() {
     <main>
       <h1>Settings</h1>
       <Link href="/jobs">Jobs</Link>
+
+      <h2>Schedule</h2>
+      <p>Runs Job Collection every day at 22:00 UTC.</p>
+      <form action={saveSchedule}>
+        <label>
+          <input type="checkbox" name="enabled" defaultChecked={scheduledCollection} /> Enabled
+        </label>{" "}
+        <button type="submit">Save</button>
+      </form>
 
       <h2>LinkedIn Job Board</h2>
       <form action={saveLinkedIn}>

@@ -1,0 +1,1 @@
+ALTER TABLE "settings" ADD COLUMN "scheduled_collection_enabled" boolean DEFAULT false NOT NULL;

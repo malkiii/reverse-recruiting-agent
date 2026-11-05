@@ -240,6 +240,12 @@ export interface LlmSettingsStore {
   save(choice: LlmChoice): Promise<void>;
 }
 
+export interface ScheduleSettingsStore {
+  /** Whether the daily Modal schedule runs Job Collection. False until it's turned on. */
+  collectionEnabled(): Promise<boolean>;
+  saveCollectionEnabled(enabled: boolean): Promise<void>;
+}
+
 export type LlmRequest<T> = { instructions: string; prompt: string; schema: z.ZodType<T> };
 
 export interface LlmGateway {

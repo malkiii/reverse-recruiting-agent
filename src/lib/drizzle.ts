@@ -12,6 +12,7 @@ import type {
   CompanyStore,
   LlmChoice,
   LlmSettingsStore,
+  ScheduleSettingsStore,
   ActorRunStore,
   ExcludedKeywordStore,
   FunctionRunResult,
@@ -330,6 +331,22 @@ export function drizzleLlmSettingsStore(databaseUrl: string): LlmSettingsStore {
   };
 }
 
+export function drizzleScheduleSettingsStore(databaseUrl: string): ScheduleSettingsStore {
+  return {
+    async collectionEnabled() {
+      const [row] = await client(databaseUrl)
+        .select({ enabled: settings.scheduledCollectionEnabled })
+        .from(settings);
+      return row?.enabled ?? false;
+    },
+
+    async saveCollectionEnabled(enabled: boolean) {
+      const values = { scheduledCollectionEnabled: enabled };
+      await client(databaseUrl).insert(settings).values(values).onConflictDoUpdate({ target: settings.id, set: values });
+    },
+  };
+}
+
 export function drizzleApplicationStore(databaseUrl: string): ApplicationStore {
   return {
     async claim(jobId: number, createdAt: Date) {
@@ -479,3 +496,4 @@ export function listFunctionRunsForApplication(databaseUrl: string, applicationI
     .where(eq(functionRuns.applicationId, applicationId))
     .orderBy(desc(functionRuns.id));
 }
+
