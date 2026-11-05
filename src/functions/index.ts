@@ -1,6 +1,6 @@
 import { setTimeout } from "node:timers/promises";
 import { z } from "zod";
-import { prepare, retry, runPreparation, runSending, send } from "../lib/application-lifecycle";
+import { prepare, retry, retrySend, runPreparation, runSending, send } from "../lib/application-lifecycle";
 import {
   drizzleActorRunStore,
   drizzleApplicationStore,
@@ -16,6 +16,7 @@ import {
   drizzleJobFeedStore,
   drizzleJobStore,
   drizzleSkippedApifyTokenStore,
+  drizzleStepLogStore,
 } from "../lib/drizzle";
 import { apifyEmailsActor, apifyEmployeesActor } from "../lib/apify-people";
 import { parseFunctionsEnv } from "../lib/env";
@@ -50,7 +51,8 @@ const prepareRequestSchema = z.union([
   z.object({ applicationId: z.number().int().positive() }),
 ]);
 
-const sendRequestSchema = z.object({ applicationId: z.number().int().positive() });
+/** A Send names the Application in Review; a Retry of a failed Send also says it's a retry. */
+const sendRequestSchema = z.object({ applicationId: z.number().int().positive(), retry: z.boolean().optional() });
 
 function requireApplication(applicationId: number | undefined) {
   if (applicationId === undefined) throw new Error("No Application was given");
@@ -83,8 +85,8 @@ export const functions = new Map<string, FunctionDefinition>([
       async claim(services, body) {
         const request = sendRequestSchema.safeParse(body);
         if (!request.success) throw new InvalidFunctionRequestError("The request body needs a numeric applicationId");
-        const { applicationId } = request.data;
-        const claim = await send(services, applicationId);
+        const { applicationId, retry } = request.data;
+        const claim = retry ? await retrySend(services, applicationId) : await send(services, applicationId);
         if (claim.outcome === "refused") throw new InvalidFunctionRequestError(claim.error);
         return claim.outcome === "claimed" ? applicationId : null;
       },
@@ -129,6 +131,7 @@ export function functionServices() {
     jobBoardSettings: drizzleJobBoardSettingsStore(DATABASE_URL),
     excludedKeywords: drizzleExcludedKeywordStore(DATABASE_URL),
     actorRuns: drizzleActorRunStore(DATABASE_URL),
+    stepLogs: drizzleStepLogStore(DATABASE_URL),
     jobs: drizzleJobStore(DATABASE_URL),
     jobFeeds: drizzleJobFeedStore(DATABASE_URL),
     feedReader: firecrawlJobFeedReader(FIRECRAWL_API_KEY),

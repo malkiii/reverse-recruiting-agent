@@ -1,4 +1,20 @@
-import { and, asc, desc, eq, getTableColumns, gt, inArray, isNull, lte, ne, notExists, notInArray, or, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  getTableColumns,
+  gt,
+  inArray,
+  isNull,
+  lte,
+  ne,
+  not,
+  notExists,
+  notInArray,
+  or,
+  sql,
+} from "drizzle-orm";
 import { COOLDOWN_DAYS } from "./decision-maker-search";
 import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
@@ -8,8 +24,13 @@ import type {
   DecisionMakerStore,
   FoundPerson,
   ApplicationChanges,
+  ApplicationStatus,
   ApplicationStore,
+  RetryTarget,
   ReviewChanges,
+  StepLogEnd,
+  StepLogStart,
+  StepLogStore,
   Company,
   CompanyStore,
   LlmChoice,
@@ -42,8 +63,11 @@ import {
   jobBoardSettings,
   jobFeeds,
   jobs,
+  PASSED_TIME_LIMIT_ERROR,
+  RETRIED_AFTER_TIME_LIMIT_ERROR,
   settings,
   skippedApifyTokens,
+  stepLogs,
 } from "./schema";
 
 const RUNS_SHOWN = 20;
@@ -69,7 +93,7 @@ export function drizzleFunctionRunStore(databaseUrl: string): FunctionRunStore {
     async start(functionName: string, startedAt: Date, timeLimitMs: number, applicationId?: number) {
       await client(databaseUrl)
         .update(functionRuns)
-        .set({ status: "failed", finishedAt: startedAt, error: "Passed its time limit" })
+        .set({ status: "failed", finishedAt: startedAt, error: PASSED_TIME_LIMIT_ERROR })
         .where(
           and(
             eq(functionRuns.functionName, functionName),
@@ -93,6 +117,28 @@ export function drizzleFunctionRunStore(databaseUrl: string): FunctionRunStore {
 
     list() {
       return client(databaseUrl).select().from(functionRuns).orderBy(desc(functionRuns.id)).limit(RUNS_SHOWN);
+    },
+
+    async markRetried(id: number, at: Date) {
+      const marked = await client(databaseUrl)
+        .update(functionRuns)
+        .set({ status: "failed", error: RETRIED_AFTER_TIME_LIMIT_ERROR, finishedAt: sql`coalesce(${functionRuns.finishedAt}, ${at})` })
+        .where(
+          and(
+            eq(functionRuns.id, id),
+            or(eq(functionRuns.status, "running"), eq(functionRuns.error, PASSED_TIME_LIMIT_ERROR)),
+          ),
+        )
+        .returning({ id: functionRuns.id });
+      return marked.length > 0;
+    },
+
+    listForApplication(applicationId: number) {
+      return client(databaseUrl)
+        .select()
+        .from(functionRuns)
+        .where(eq(functionRuns.applicationId, applicationId))
+        .orderBy(desc(functionRuns.id));
     },
   };
 }
@@ -367,14 +413,26 @@ export function drizzleApplicationStore(databaseUrl: string): ApplicationStore {
       return application;
     },
 
-    async retry(id: number) {
+    async retry(id: number, target: RetryTarget) {
       // Only a failed Application matches, so a double click on Retry claims it once.
+      const sendStep = eq(applications.currentStep, "send");
       const retried = await client(databaseUrl)
         .update(applications)
-        .set({ status: "preparing", error: null })
-        .where(and(eq(applications.id, id), eq(applications.status, "failed")))
+        .set({ status: target === "send" ? "sending" : "preparing", error: null })
+        .where(
+          and(eq(applications.id, id), eq(applications.status, "failed"), target === "send" ? sendStep : not(sendStep)),
+        )
         .returning({ id: applications.id });
       return retried.length > 0;
+    },
+
+    async fail(id: number, from: ApplicationStatus, error: string) {
+      const failed = await client(databaseUrl)
+        .update(applications)
+        .set({ status: "failed", error })
+        .where(and(eq(applications.id, id), eq(applications.status, from)))
+        .returning({ id: applications.id });
+      return failed.length > 0;
     },
 
     async cancel(id: number) {
@@ -416,7 +474,7 @@ export function drizzleApplicationStore(databaseUrl: string): ApplicationStore {
       // Only an Application in Review matches, so a double click on Send claims it once.
       const claimed = await client(databaseUrl)
         .update(applications)
-        .set({ status: "sending" })
+        .set({ status: "sending", currentStep: "send" })
         .where(and(eq(applications.id, id), eq(applications.status, "in-review")))
         .returning({ id: applications.id });
       return claimed.length > 0;
@@ -424,6 +482,38 @@ export function drizzleApplicationStore(databaseUrl: string): ApplicationStore {
 
     async update(id: number, changes: ApplicationChanges) {
       await client(databaseUrl).update(applications).set(changes).where(eq(applications.id, id));
+    },
+  };
+}
+
+/** Each attempt at each Application step. */
+export function drizzleStepLogStore(databaseUrl: string): StepLogStore {
+  return {
+    async start(log: StepLogStart) {
+      const [started] = await client(databaseUrl)
+        .insert(stepLogs)
+        .values({ ...log, status: "running" })
+        .returning({ id: stepLogs.id });
+      return started.id;
+    },
+
+    async finish(id: number, end: StepLogEnd) {
+      await client(databaseUrl).update(stepLogs).set(end).where(eq(stepLogs.id, id));
+    },
+
+    listForApplication(applicationId: number) {
+      return client(databaseUrl)
+        .select()
+        .from(stepLogs)
+        .where(eq(stepLogs.applicationId, applicationId))
+        .orderBy(asc(stepLogs.id));
+    },
+
+    async failRunning(applicationId: number, error: string, finishedAt: Date) {
+      await client(databaseUrl)
+        .update(stepLogs)
+        .set({ status: "failed", error, finishedAt })
+        .where(and(eq(stepLogs.applicationId, applicationId), eq(stepLogs.status, "running")));
     },
   };
 }
@@ -551,15 +641,6 @@ export async function findApplicationIdForJob(databaseUrl: string, jobId: number
   return application?.id;
 }
 
-/** The Function runs that served an Application, newest first. */
-export function listFunctionRunsForApplication(databaseUrl: string, applicationId: number) {
-  return client(databaseUrl)
-    .select()
-    .from(functionRuns)
-    .where(eq(functionRuns.applicationId, applicationId))
-    .orderBy(desc(functionRuns.id));
-}
-
 /**
  * Deletes data 6+ months old: Jobs (with their Applications and recipients), Function runs, actor runs and Decision
  * Makers. Keeps a Job whose Application is newer or still in progress, running Function runs, and Decision Makers
@@ -582,6 +663,7 @@ export async function cleanUpOldData(databaseUrl: string) {
         ),
       );
 
+    await tx.delete(stepLogs).where(inArray(stepLogs.applicationId, oldApplicationIds));
     const recipients = await tx
       .delete(applicationRecipients)
       .where(inArray(applicationRecipients.applicationId, oldApplicationIds))

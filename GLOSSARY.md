@@ -84,6 +84,14 @@ _Avoid_: Submit
 The Admin's final decision at Review not to send an Application. A cancelled Job cannot be Prepared again.
 _Avoid_: Reject, delete
 
+**Retry**:
+The Admin's resumption of a Failed Application from the step it failed at, skipping finished steps and anyone already emailed.
+_Avoid_: Rerun, restart
+
+**Step Log**:
+The record of one attempt at one step of an Application, with its result or error, shown on the dashboard.
+_Avoid_: Event, history
+
 **No Contacts**:
 The outcome of an Application that ends with no Decision Maker who has an email address.
 _Avoid_: Failed

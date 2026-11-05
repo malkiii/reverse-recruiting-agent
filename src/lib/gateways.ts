@@ -10,6 +10,7 @@ import type {
   jobs,
   JobSearch,
   LlmProvider,
+  stepLogs,
 } from "./schema";
 
 export type FunctionRun = typeof functionRuns.$inferSelect;
@@ -26,6 +27,13 @@ export interface FunctionRunStore {
   start(functionName: string, startedAt: Date, timeLimitMs: number, applicationId?: number): Promise<number | null>;
   finish(id: number, result: FunctionRunResult): Promise<void>;
   list(): Promise<FunctionRun[]>;
+  /** The runs that served the Application, newest first. */
+  listForApplication(applicationId: number): Promise<FunctionRun[]>;
+  /**
+   * Atomically marks a run that passed its time limit as retried, whether it's still recorded as running or a later
+   * start marked it failed. False when it already was, so a double click on Retry deals with a killed run once.
+   */
+  markRetried(id: number, at: Date): Promise<boolean>;
 }
 
 export type TelegramLink = { label: string; url: string };
@@ -177,7 +185,7 @@ export interface JobBoardGateway {
 
 export type Application = typeof applications.$inferSelect;
 export type ApplicationStatus = Application["status"];
-export type PrepareStep = Application["currentStep"];
+export type ApplicationStep = Application["currentStep"];
 export type ApplicationChanges = Partial<Omit<Application, "id" | "jobId" | "createdAt">>;
 /** What the Admin can change in Review, besides removing a Decision Maker. */
 export type ReviewChanges = Partial<Pick<Application, "subject" | "coverLetter" | "resumeFileId" | "resumeName" | "resumeLink">>;
@@ -186,17 +194,47 @@ export interface ApplicationStore {
   /** Atomically creates the Job's one Application, as preparing. Null when the Job already has one. */
   claim(jobId: number, createdAt: Date): Promise<number | null>;
   get(id: number): Promise<Application | undefined>;
-  /** Atomically sets a failed Application back to preparing, clearing its error. False when it isn't failed. */
-  retry(id: number): Promise<boolean>;
+  /**
+   * Atomically sets a failed Application back to preparing, or to sending when it failed at the send step,
+   * clearing its error. False when it isn't failed, or failed at the other Function's steps.
+   */
+  retry(id: number, target: RetryTarget): Promise<boolean>;
+  /** Atomically marks the Application failed when it's still in this status. False when it isn't. */
+  fail(id: number, from: ApplicationStatus, error: string): Promise<boolean>;
   /** Atomically sets an Application in Review to cancelled. False when it isn't in Review. */
   cancel(id: number): Promise<boolean>;
   /** Atomically saves the Admin's changes to an Application in Review. False when it isn't in Review. */
   edit(id: number, changes: ReviewChanges): Promise<boolean>;
   /** Atomically removes a Decision Maker from an Application in Review, keeping them at the Company. False when it isn't in Review. */
   removeRecipient(id: number, decisionMakerId: number): Promise<boolean>;
-  /** Atomically moves an Application from Review to sending, so a double click on Send acts once. False when it isn't in Review. */
+  /**
+   * Atomically moves an Application from Review to sending, at the send step, so a double click on Send acts once.
+   * False when it isn't in Review.
+   */
   claimSend(id: number): Promise<boolean>;
   update(id: number, changes: ApplicationChanges): Promise<void>;
+}
+
+/** Which Function a Retry resumes: prepare-application, or send-application for an Application that failed at the send step. */
+export type RetryTarget = "prepare" | "send";
+
+/** One attempt at one Application step. */
+export type StepLog = typeof stepLogs.$inferSelect;
+export type StepLogStart = Pick<StepLog, "applicationId" | "step" | "attempt" | "startedAt">;
+/** How an attempt ended. */
+export type StepLogEnd = Pick<StepLog, "result" | "error" | "finishedAt"> & {
+  status: Exclude<StepLog["status"], "running">;
+};
+
+export interface StepLogStore {
+  /** Records an attempt as running, and returns its ID. */
+  start(log: StepLogStart): Promise<number>;
+  /** Records how the attempt ended. */
+  finish(id: number, end: StepLogEnd): Promise<void>;
+  /** The Application's attempts, oldest first. */
+  listForApplication(applicationId: number): Promise<StepLog[]>;
+  /** Fails the Application's attempts still running, whose Function was killed. */
+  failRunning(applicationId: number, error: string, finishedAt: Date): Promise<void>;
 }
 
 export interface JobPageReader {

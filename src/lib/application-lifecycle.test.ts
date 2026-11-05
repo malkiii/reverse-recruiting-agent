@@ -1,5 +1,18 @@
 import { expect, test } from "vitest";
-import { cancel, edit, prepare, removeDecisionMaker, retry, runPreparation, runSending, send } from "./application-lifecycle";
+import {
+  applicationAsOf,
+  cancel,
+  edit,
+  PREPARE_TIME_LIMIT_MS,
+  prepare,
+  removeDecisionMaker,
+  retry,
+  retrySend,
+  runPreparation,
+  runSending,
+  send,
+  SEND_TIME_LIMIT_MS,
+} from "./application-lifecycle";
 import {
   FakeActor,
   FakeActorRunStore,
@@ -14,10 +27,12 @@ import {
   FakeLlm,
   FakePdfReader,
   FakeResumeFolderStore,
+  FakeFunctionRunStore,
   FakeSkippedApifyTokenStore,
+  FakeStepLogStore,
 } from "./fake-gateways";
 import type { EmployeeSearch, FoundEmail, Person } from "./gateways";
-import type { JobFunction } from "./schema";
+import { type JobFunction, PREPARE_APPLICATION, SEND_APPLICATION } from "./schema";
 
 const now = new Date("2026-11-04T10:00:00Z");
 
@@ -73,6 +88,8 @@ async function setup() {
     employeesActor: new FakeActor<EmployeeSearch, Person>("employees"),
     emailsActor: new FakeActor<string[], FoundEmail>("emails"),
     actorRuns: new FakeActorRunStore(),
+    stepLogs: new FakeStepLogStore(),
+    runs: new FakeFunctionRunStore(),
     decisionMakers,
     apifyTokens: "token-a,token-b",
     skippedApifyTokens: new FakeSkippedApifyTokenStore(),
@@ -245,6 +262,48 @@ test("an LLM error marks the Application failed, keeps the Job page, and fails t
   });
 });
 
+test("a failed step is tried again, logging each attempt with its result or error", async () => {
+  const deps = await setup();
+  deps.fakeLlm.answers.push(new Error("The LLM is overloaded"), answer);
+  const id = (await prepare(deps, 1))!;
+
+  await runPreparation(deps, id);
+
+  expect(await deps.applications.get(id)).toMatchObject({ status: "no-contacts", currentStep: "find-decision-makers" });
+  expect(await deps.stepLogs.listForApplication(id)).toMatchObject([
+    { step: "read-job", attempt: 1, status: "succeeded", result: "Read the Job's collected description", startedAt: now, finishedAt: now },
+    { step: "choose-resume", attempt: 1, status: "failed", error: "The LLM is overloaded" },
+    { step: "choose-resume", attempt: 2, status: "succeeded", result: "Chose Backend Engineer Resume.pdf" },
+    { step: "find-company-page", attempt: 1, status: "succeeded" },
+    // No Decision Maker is found, which ends the Application without failing the step.
+    { step: "find-decision-makers", attempt: 1, status: "stopped", error: "No Decision Maker with an email address was found" },
+  ]);
+});
+
+test("a step is tried 3 times, then the Application is marked failed and the Function fails", async () => {
+  const deps = await setup();
+  const waits: number[] = [];
+  deps.sleep = async (ms) => void waits.push(ms);
+  deps.fakeLlm.answers.push(...[1, 2, 3].map((n) => new Error(`The LLM is overloaded ${n}`)), answer);
+  const id = (await prepare(deps, 1))!;
+
+  await expect(runPreparation(deps, id)).rejects.toThrow("The LLM is overloaded 3");
+
+  expect(await deps.applications.get(id)).toMatchObject({
+    status: "failed",
+    currentStep: "choose-resume",
+    error: "The LLM is overloaded 3",
+  });
+  expect(deps.fakeLlm.requests).toHaveLength(3);
+  expect(waits).toEqual([10_000, 20_000]);
+  const logs = await deps.stepLogs.listForApplication(id);
+  expect(logs.filter(({ step }) => step === "choose-resume")).toMatchObject([
+    { attempt: 1, status: "failed" },
+    { attempt: 2, status: "failed" },
+    { attempt: 3, status: "failed", error: "The LLM is overloaded 3" },
+  ]);
+});
+
 test("a Job with a saved Company LinkedIn page uses it without searching", async () => {
   const deps = await setup();
   await deps.jobs.save([
@@ -328,6 +387,91 @@ test("Retry resumes only a failed Application, once", async () => {
 
   expect(claims).toEqual([id, null]);
   expect(await deps.applications.get(id)).toMatchObject({ status: "preparing", error: null });
+});
+
+const minutesAfter = (date: Date, minutes: number) => new Date(date.getTime() + minutes * 60_000);
+
+test("an Application whose Function passed its time limit shows as failed and can be retried from its step", async () => {
+  const deps = await setup();
+  deps.fakeLlm.answers.push(answer);
+  const id = (await prepare(deps, 1))!;
+  // Modal kills the Function while it chooses the Resume, so nothing records the end.
+  await deps.runs.start(PREPARE_APPLICATION, now, PREPARE_TIME_LIMIT_MS, id);
+  await deps.applications.update(id, { currentStep: "choose-resume", jobPage: "Build APIs in Go" });
+  await deps.stepLogs.start({ applicationId: id, step: "choose-resume", attempt: 1, startedAt: now });
+
+  deps.now = () => minutesAfter(now, 29);
+  const working = (await deps.applications.get(id))!;
+  expect(applicationAsOf(working, await deps.runs.listForApplication(id), deps.now())).toEqual(working);
+  expect(await retry(deps, id)).toBeNull();
+
+  deps.now = () => minutesAfter(now, 30);
+  expect(applicationAsOf(working, await deps.runs.listForApplication(id), deps.now())).toMatchObject({
+    status: "failed",
+    error: "Its Function passed its time limit: Retry to resume it",
+  });
+  expect(await retry(deps, id)).toBe(id);
+  await runPreparation(deps, id);
+
+  expect(await deps.applications.get(id)).toMatchObject({ currentStep: "find-decision-makers", resumeName: "Backend Engineer Resume.pdf" });
+  expect((await deps.stepLogs.listForApplication(id)).slice(0, 2)).toMatchObject([
+    { step: "choose-resume", attempt: 1, status: "failed", error: "Its Function passed its time limit: Retry to resume it" },
+    { step: "choose-resume", attempt: 2, status: "succeeded" },
+  ]);
+});
+
+test("a double click on Retry of a killed Function claims it once, and a later Function start doesn't hide the kill", async () => {
+  const deps = await setup();
+  const id = (await prepare(deps, 1))!;
+  await deps.runs.start(PREPARE_APPLICATION, now, PREPARE_TIME_LIMIT_MS, id);
+  await deps.stepLogs.start({ applicationId: id, step: "read-job", attempt: 1, startedAt: now });
+  // Another Application's Prepare marks the killed run failed.
+  deps.now = () => minutesAfter(now, 31);
+  await deps.runs.start(PREPARE_APPLICATION, deps.now(), PREPARE_TIME_LIMIT_MS, 99);
+
+  expect((await Promise.all([retry(deps, id), retry(deps, id)])).filter((claim) => claim !== null)).toEqual([id]);
+  // Before the retried Function's run is recorded.
+  expect(await retry(deps, id)).toBeNull();
+  expect(await deps.applications.get(id)).toMatchObject({ status: "preparing", error: null });
+});
+
+test("an Application just claimed by Send or Retry isn't taken for a killed one before its Function's run starts", async () => {
+  const deps = await setup();
+  const id = await reachReview(deps);
+  const runId = (await deps.runs.start(PREPARE_APPLICATION, now, PREPARE_TIME_LIMIT_MS, id))!;
+  await deps.runs.finish(runId, { status: "succeeded", finishedAt: now, error: null });
+  deps.now = () => minutesAfter(now, 60);
+
+  await send(deps, id);
+  const claimed = (await deps.applications.get(id))!;
+  expect(applicationAsOf(claimed, await deps.runs.listForApplication(id), deps.now())).toEqual(claimed);
+  expect(await retrySend(deps, id)).toEqual({ outcome: "not-failed" });
+
+  const sendRun = (await deps.runs.start(SEND_APPLICATION, deps.now(), SEND_TIME_LIMIT_MS, id))!;
+  await deps.runs.finish(sendRun, { status: "failed", finishedAt: deps.now(), error: "Gmail refused the email" });
+  await deps.applications.update(id, { status: "failed", error: "Gmail refused the email" });
+  expect(await retrySend(deps, id)).toEqual({ outcome: "claimed" });
+  expect(await retrySend(deps, id)).toEqual({ outcome: "not-failed" });
+  expect(await deps.applications.get(id)).toMatchObject({ status: "sending" });
+});
+
+test("a Send whose Function passed its time limit can be retried, emailing only those not emailed yet", async () => {
+  const deps = await setup();
+  const id = await reachReview(deps);
+  await send(deps, id);
+  const [ann] = await deps.decisionMakers.listForApplication(id);
+  // Modal kills the Function after Ann's email.
+  await deps.runs.start(SEND_APPLICATION, now, SEND_TIME_LIMIT_MS, id);
+  await deps.decisionMakers.recordSent(id, ann.id, now);
+
+  expect(await retrySend(deps, id)).toEqual({ outcome: "not-failed" });
+  deps.now = () => minutesAfter(now, 10);
+  expect(await retry(deps, id)).toBeNull();
+  expect(await retrySend(deps, id)).toEqual({ outcome: "claimed" });
+  await runSending(deps, id);
+
+  expect(deps.fakeGmail.sent.map(({ to }) => to)).toEqual(["bob@acme.com"]);
+  expect(await deps.applications.get(id)).toMatchObject({ status: "sent" });
 });
 
 test("company suffixes are removed only as whole words, so a name inside another Company's name doesn't match", async () => {
@@ -554,6 +698,25 @@ test("a Retry rereads finished runs and starts again only the run that failed", 
   expect(deps.employeesActor.inputs.map(({ jobFunction }) => jobFunction)).toEqual(["12", "9", "9", "18", "19", "20"]);
   expect(deps.emailsActor.started).toHaveLength(2);
   expect(names(await deps.decisionMakers.listForApplication(id))).toEqual(["Ann", "Bob"]);
+});
+
+test("an attempt tried again after a long poll gets only the polls left, so it can't pass the time limit", async () => {
+  const deps = await setup();
+  employees(deps, "12", ["Ann"]);
+  emails(deps, ["Ann"], ["Ann"]);
+  deps.employeesActor.statuses.set(JSON.stringify(search("12")), [...Array(60).fill("running"), "succeeded"]);
+  deps.emailsActor.startErrors.push(new Error("Apify is down"));
+  deps.emailsActor.statuses.set(JSON.stringify([person("Ann").profileUrl]), [...Array(70).fill("running"), "succeeded"]);
+  deps.fakeLlm.answers.push(answer, letter);
+  const id = (await prepare(deps, 1))!;
+
+  await expect(runPreparation(deps, id)).rejects.toThrow("emails-run-1 (emails:12) is still running");
+
+  const searches = (await deps.stepLogs.listForApplication(id)).filter(({ step }) => step === "find-decision-makers");
+  expect(searches.map(({ error }) => error)).toEqual([
+    "Apify is down",
+    "Actor run emails-run-1 (emails:12) is still running: Retry to resume it",
+  ]);
 });
 
 test("emails are matched to people by profile URL, ignoring how the email actor writes it, and anyone missing is skipped", async () => {
@@ -1003,7 +1166,7 @@ test("Send is refused unless ALLOW_SEND is enabled, and the Function emails nobo
   expect(deps.fakeGmail.sent).toEqual([]);
 });
 
-test("each recipient is recorded right after their email goes out, so a failed Send keeps who was emailed and stays locked", async () => {
+test("a Send is tried 3 times, emailing nobody twice, then the Application is marked failed at the send step and stays locked", async () => {
   const deps = await setup();
   const id = await reachReview(deps);
   deps.now = () => sendTime;
@@ -1012,10 +1175,66 @@ test("each recipient is recorded right after their email goes out, so a failed S
 
   await expect(runSending(deps, id)).rejects.toThrow("Gmail refused the email");
 
+  expect(deps.fakeGmail.sent.map(({ to }) => to)).toEqual(["ann@acme.com"]);
   expect(await deps.decisionMakers.listForApplication(id)).toMatchObject([
     { name: "Ann", sentAt: sendTime, lastEmailedAt: sendTime },
     { name: "Bob", sentAt: null, lastEmailedAt: null },
   ]);
-  expect(await deps.applications.get(id)).toMatchObject({ status: "sending", error: "Gmail refused the email" });
+  expect(await deps.applications.get(id)).toMatchObject({
+    status: "failed",
+    currentStep: "send",
+    error: "Gmail refused the email",
+  });
+  const sendLogs = (await deps.stepLogs.listForApplication(id)).filter(({ step }) => step === "send");
+  expect(sendLogs.map(({ attempt, status }) => [attempt, status])).toEqual([
+    [1, "failed"],
+    [2, "failed"],
+    [3, "failed"],
+  ]);
   expect(await edit(deps, id, { subject: "Changed" })).toMatchObject({ saved: false });
+  expect(await cancel(deps, id)).toBe(false);
+});
+
+test("a Retry of a partly sent Application resumes the Send, emailing only those not emailed yet", async () => {
+  const deps = await setup();
+  const id = await reachReview(deps);
+  deps.fakeGmail.failFrom = 2;
+  await send(deps, id);
+  await expect(runSending(deps, id)).rejects.toThrow("Gmail refused the email");
+  deps.fakeGmail.failFrom = Infinity;
+
+  // A failed Send isn't prepared again.
+  expect(await retry(deps, id)).toBeNull();
+  expect(await retrySend(deps, id)).toEqual({ outcome: "claimed" });
+  expect(await retrySend(deps, id)).toEqual({ outcome: "not-failed" });
+  expect(await deps.applications.get(id)).toMatchObject({ status: "sending", error: null });
+  await runSending(deps, id);
+
+  expect(deps.fakeGmail.sent.map(({ to }) => to)).toEqual(["ann@acme.com", "bob@acme.com"]);
+  expect(await deps.applications.get(id)).toMatchObject({ status: "sent", error: null });
+  expect((await deps.stepLogs.listForApplication(id)).at(-1)).toMatchObject({
+    step: "send",
+    attempt: 4,
+    status: "succeeded",
+    result: "Emailed Bob <bob@acme.com>",
+  });
+});
+
+test("a failed Prepare can't be retried as a Send, and a Send can't be retried without ALLOW_SEND", async () => {
+  const deps = await setup();
+  const preparing = (await prepare(deps, 2))!;
+  await deps.applications.update(preparing, { status: "failed", error: "Firecrawl was down" });
+
+  expect(await retrySend(deps, preparing)).toEqual({ outcome: "not-failed" });
+
+  const sending = await reachReview(deps);
+  deps.fakeGmail.failFrom = 1;
+  await send(deps, sending);
+  await expect(runSending(deps, sending)).rejects.toThrow("Gmail refused the email");
+  deps.allowSend = false;
+  expect(await retrySend(deps, sending)).toEqual({
+    outcome: "refused",
+    error: "Sending is turned off here: set ALLOW_SEND=true to send",
+  });
+  expect(await deps.applications.get(sending)).toMatchObject({ status: "failed" });
 });

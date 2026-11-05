@@ -18,6 +18,11 @@ export const COLLECT_JOBS = "collect-jobs";
 export const PREPARE_APPLICATION = "prepare-application";
 export const SEND_APPLICATION = "send-application";
 
+/** The error on a Function run that passed its time limit, as Modal killed it without a word. */
+export const PASSED_TIME_LIMIT_ERROR = "Passed its time limit";
+/** The error on a killed Function run once a Retry has dealt with its Application. */
+export const RETRIED_AFTER_TIME_LIMIT_ERROR = "Passed its time limit, then retried";
+
 export const LLM_PROVIDERS = ["claude", "gemini", "openai", "groq"] as const;
 export type LlmProvider = (typeof LLM_PROVIDERS)[number];
 
@@ -33,15 +38,19 @@ export const APPLICATION_STATUSES = [
   "failed",
 ] as const;
 
-/** The Prepare steps, in order. A step is current until it finishes. */
-export const PREPARE_STEPS = [
+/** The Application steps, in order: Prepare's, then Send's. A step is current until it finishes. */
+export const APPLICATION_STEPS = [
   "read-job",
   "choose-resume",
   "find-company-page",
   "find-decision-makers",
   "write-cover-letter",
   "check-sharing",
+  "send",
 ] as const;
+
+/** A stopped attempt ended the Application without failing it, such as No Contacts. */
+export const STEP_LOG_STATUSES = ["running", "succeeded", "stopped", "failed"] as const;
 
 /** LinkedIn job function IDs the employees actor filters by, as its currentFunction input. */
 export const JOB_FUNCTIONS = ["12", "9", "18", "19", "20", "any"] as const;
@@ -200,7 +209,7 @@ export const applications = pgTable("applications", {
     .unique()
     .references(() => jobs.id),
   status: text({ enum: APPLICATION_STATUSES }).notNull(),
-  currentStep: text("current_step", { enum: PREPARE_STEPS }).notNull(),
+  currentStep: text("current_step", { enum: APPLICATION_STEPS }).notNull(),
   /** Why the Application stopped, when it did. */
   error: text(),
   /** The Job page as markdown, kept so a Retry doesn't pay to read it again. */
@@ -233,3 +242,21 @@ export const applicationRecipients = pgTable(
   },
   (table) => [primaryKey({ columns: [table.applicationId, table.decisionMakerId] })],
 ).enableRLS();
+
+/** One attempt at one Application step, shown on the dashboard. */
+export const stepLogs = pgTable("step_logs", {
+  id: bigint({ mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+  applicationId: bigint("application_id", { mode: "number" })
+    .notNull()
+    .references(() => applications.id),
+  step: text({ enum: APPLICATION_STEPS }).notNull(),
+  /** Counted across the Admin's Retries, from 1. */
+  attempt: integer().notNull(),
+  status: text({ enum: STEP_LOG_STATUSES }).notNull(),
+  /** What a finished step did. */
+  result: text(),
+  /** Why a stopped or failed attempt ended. */
+  error: text(),
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+}).enableRLS();

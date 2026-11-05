@@ -2,30 +2,32 @@ import { revalidatePath } from "next/cache";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { connection } from "next/server";
-import { cancel, edit, type EditResult, removeDecisionMaker } from "@/lib/application-lifecycle";
+import { applicationAsOf, cancel, edit, type EditResult, removeDecisionMaker } from "@/lib/application-lifecycle";
 import { startFunction } from "@/lib/dashboard-functions";
 import { dashboardGoogle } from "@/lib/dashboard-google";
 import {
   drizzleApplicationStore,
   drizzleCompanyStore,
   drizzleDecisionMakerStore,
+  drizzleFunctionRunStore,
   drizzleJobStore,
-  listFunctionRunsForApplication,
+  drizzleStepLogStore,
 } from "@/lib/drizzle";
 import { parseDashboardEnv } from "@/lib/env";
 import { runAsOf } from "@/lib/function-runs";
-import type { Application, DriveFile, PrepareStep } from "@/lib/gateways";
+import type { Application, ApplicationStep, DriveFile, StepLog } from "@/lib/gateways";
 import { GoogleConnectionError } from "@/lib/google-connection";
 import { resumesIn } from "@/lib/resumes";
 import { PREPARE_APPLICATION, SEND_APPLICATION } from "@/lib/schema";
 
-const STEP_NAMES: Record<PrepareStep, string> = {
+const STEP_NAMES: Record<ApplicationStep, string> = {
   "read-job": "Reading the Job page",
   "choose-resume": "Choosing a Resume",
   "find-company-page": "Finding the Company's LinkedIn page",
   "find-decision-makers": "Finding Decision Makers",
   "write-cover-letter": "Writing the Cover Letter",
   "check-sharing": "Checking the Resume Folder's sharing",
+  send: "Sending",
 };
 
 const applicationPath = (applicationId: number) => `/applications/${applicationId}`;
@@ -42,9 +44,13 @@ async function retryApplication(formData: FormData) {
   "use server";
 
   const applicationId = Number(formData.get("applicationId"));
+  // A failed Send is resumed by send-application, anything else by prepare-application.
   // A 409 means it's no longer failed, such as after a double click, which the refreshed page shows.
-  await startFunction(PREPARE_APPLICATION, { applicationId });
-  backToApplication(applicationId);
+  const response =
+    formData.get("currentStep") === "send"
+      ? await startFunction(SEND_APPLICATION, { applicationId, retry: true })
+      : await startFunction(PREPARE_APPLICATION, { applicationId });
+  backToApplication(applicationId, response.status === 400 ? response.error : undefined);
 }
 
 async function cancelApplication(formData: FormData) {
@@ -125,6 +131,39 @@ async function listResumes(application: Application): Promise<DriveFile[]> {
   }
 }
 
+/** Each attempt at each step, oldest first. A running attempt whose Function was killed shows as failed. */
+function StepLogs({ logs, stalled }: { logs: StepLog[]; stalled: boolean }) {
+  return (
+    <>
+      <h2>Step logs</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Step</th>
+            <th>Attempt</th>
+            <th>Status</th>
+            <th>Started</th>
+            <th>Finished</th>
+            <th>Result or error</th>
+          </tr>
+        </thead>
+        <tbody>
+          {logs.map((log) => (
+            <tr key={log.id}>
+              <td>{STEP_NAMES[log.step]}</td>
+              <td>{log.attempt}</td>
+              <td>{log.status === "running" && stalled ? "failed" : log.status}</td>
+              <td>{log.startedAt.toLocaleString()}</td>
+              <td>{log.finishedAt?.toLocaleString()}</td>
+              <td>{log.error ?? log.result}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </>
+  );
+}
+
 function ReviewForm({ application, resumes }: { application: Application; resumes: DriveFile[] }) {
   return (
     <form action={saveReview}>
@@ -174,21 +213,25 @@ export default async function ApplicationPage({
   const id = Number((await params).id);
   const { error } = await searchParams;
   const { DATABASE_URL } = parseDashboardEnv(process.env);
-  const application = Number.isInteger(id) ? await drizzleApplicationStore(DATABASE_URL).get(id) : undefined;
-  if (!application) notFound();
+  const saved = Number.isInteger(id) ? await drizzleApplicationStore(DATABASE_URL).get(id) : undefined;
+  if (!saved) notFound();
 
-  const inReview = application.status === "in-review";
-  const [job, runs, decisionMakers, company, resumes] = await Promise.all([
-    drizzleJobStore(DATABASE_URL).get(application.jobId),
-    listFunctionRunsForApplication(DATABASE_URL, id),
+  const inReview = saved.status === "in-review";
+  const [job, runs, decisionMakers, company, resumes, logs] = await Promise.all([
+    drizzleJobStore(DATABASE_URL).get(saved.jobId),
+    drizzleFunctionRunStore(DATABASE_URL).listForApplication(id),
     drizzleDecisionMakerStore(DATABASE_URL).listForApplication(id),
-    application.companyId === null ? undefined : drizzleCompanyStore(DATABASE_URL).get(application.companyId),
-    inReview ? listResumes(application) : [],
+    saved.companyId === null ? undefined : drizzleCompanyStore(DATABASE_URL).get(saved.companyId),
+    inReview ? listResumes(saved) : [],
+    drizzleStepLogStore(DATABASE_URL).listForApplication(id),
   ]);
   const now = new Date();
+  // Shown as failed when its Function passed its time limit, so it can be retried.
+  const application = applicationAsOf(saved, runs, now);
+  const stalled = application !== saved;
   // Refreshes only while a Function is working on it, so a killed Function doesn't refresh forever.
   const working = runs.some((run) => runAsOf(run, now).status === "running");
-  const sending = application.status === "sending" || application.status === "sent";
+  const sending = application.status === "sending" || application.status === "sent" || application.currentStep === "send";
 
   return (
     <main>
@@ -206,18 +249,17 @@ export default async function ApplicationPage({
 
       <p>
         Status: <strong>{application.status}</strong>
-        {application.status === "preparing" &&
-          (working ? (
-            <> &middot; {STEP_NAMES[application.currentStep]}&hellip;</>
-          ) : (
-            <> &middot; Stopped before: {STEP_NAMES[application.currentStep]}</>
-          ))}
+        {(application.status === "preparing" || application.status === "sending") && (
+          <> &middot; {STEP_NAMES[application.currentStep]}&hellip;</>
+        )}
+        {application.status === "failed" && <> &middot; Failed at: {STEP_NAMES[application.currentStep]}</>}
       </p>
       {error && <p role="alert">{error}</p>}
       {application.error && <p role="alert">{application.error}</p>}
       {application.status === "failed" && (
         <form action={retryApplication}>
           <input type="hidden" name="applicationId" value={application.id} />
+          <input type="hidden" name="currentStep" value={application.currentStep} />
           <button type="submit">Retry</button>
         </form>
       )}
@@ -305,6 +347,8 @@ export default async function ApplicationPage({
           <p>Cancel is final: this Job can't be Prepared again.</p>
         </>
       )}
+
+      {logs.length > 0 && <StepLogs logs={logs} stalled={stalled} />}
 
       {runs.length > 0 && (
         <p>

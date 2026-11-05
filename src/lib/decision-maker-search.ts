@@ -29,6 +29,11 @@ const POLL_DELAY_MS = 10_000;
 // 20 minutes, well inside prepare-application's time limit with the earlier steps. A Retry resumes the run still going.
 const MAX_POLLS = 120;
 
+/** The polls one prepare-application run has left, shared by every attempt at the search so they can't pass its time limit. */
+export type PollBudget = { left: number };
+
+export const newPollBudget = (): PollBudget => ({ left: MAX_POLLS });
+
 export type DecisionMakerSearchDeps = {
   employeesActor: EmployeesActor;
   emailsActor: EmailsActor;
@@ -39,6 +44,12 @@ export type DecisionMakerSearchDeps = {
   now: () => Date;
   sleep: (ms: number) => Promise<void>;
 };
+
+/**
+ * An error a step doesn't try again on its own, as that would pay for another actor run or pass the time limit.
+ * It waits for the Admin's Retry.
+ */
+export class WaitForRetryError extends Error {}
 
 type SearchedCompany = { id: number; linkedinUrl: string };
 
@@ -61,7 +72,7 @@ const profileKey = (url: string) =>
  * Runs the Application's actors one at a time. Each run is saved before polling, so a Retry polls and rereads
  * the same run instead of paying for another, and starts again only a run that failed.
  */
-async function actorRunner(deps: DecisionMakerSearchDeps, applicationId: number) {
+async function actorRunner(deps: DecisionMakerSearchDeps, applicationId: number, polls: PollBudget) {
   const saved = await deps.actorRuns.listForApplication(applicationId);
   const router = apifyTokenRouter({
     apifyTokens: deps.apifyTokens,
@@ -69,7 +80,6 @@ async function actorRunner(deps: DecisionMakerSearchDeps, applicationId: number)
     lastToken: () => deps.actorRuns.lastToken(),
     now: deps.now,
   });
-  let pollsLeft = MAX_POLLS;
 
   return async function run<Input, Result>(gateway: ActorGateway<Input, Result>, purpose: string, input: Input) {
     let run = saved.findLast((run) => run.purpose === purpose);
@@ -93,14 +103,14 @@ async function actorRunner(deps: DecisionMakerSearchDeps, applicationId: number)
 
     let status = await gateway.status(run);
     while (status === "running") {
-      if (pollsLeft === 0) throw new Error(`Actor run ${run.runId} (${purpose}) is still running: Retry to resume it`);
-      pollsLeft -= 1;
+      if (polls.left === 0) throw new WaitForRetryError(`Actor run ${run.runId} (${purpose}) is still running: Retry to resume it`);
+      polls.left -= 1;
       await deps.sleep(POLL_DELAY_MS);
       status = await gateway.status(run);
     }
     if (status === "failed") {
       await deps.actorRuns.close(run.runId, deps.now());
-      throw new Error(`Actor run ${run.runId} (${purpose}) failed: Retry to start it again`);
+      throw new WaitForRetryError(`Actor run ${run.runId} (${purpose}) failed: Retry to start it again`);
     }
     return gateway.results(run);
   };
@@ -111,8 +121,13 @@ async function actorRunner(deps: DecisionMakerSearchDeps, applicationId: number)
  * Company, including those with no email. Emails are looked up only for as many people as are still needed. "any" is
  * searched only when nobody with an email was found. Returns everyone found, as saved.
  */
-async function searchPeople(deps: DecisionMakerSearchDeps, applicationId: number, company: SearchedCompany) {
-  const run = await actorRunner(deps, applicationId);
+async function searchPeople(
+  deps: DecisionMakerSearchDeps,
+  applicationId: number,
+  company: SearchedCompany,
+  polls: PollBudget,
+) {
+  const run = await actorRunner(deps, applicationId, polls);
   const found: FoundPerson[] = [];
   const withEmail = () => found.filter(({ email }) => email).length;
 
@@ -225,10 +240,11 @@ export async function chooseDecisionMakers(
   deps: DecisionMakerSearchDeps,
   applicationId: number,
   company: SearchedCompany,
+  polls: PollBudget,
 ): Promise<DecisionMakerChoice> {
   const saved = await currentPeople(deps, company.id);
   if (saved) console.log(`Application ${applicationId}: reusing ${saved.length} saved people`);
-  const people = saved ?? (await searchPeople(deps, applicationId, company));
+  const people = saved ?? (await searchPeople(deps, applicationId, company, polls));
   const choice = chooseFrom(people, deps.now());
   if (choice.outcome === "chosen") {
     await deps.decisionMakers.addToApplication(

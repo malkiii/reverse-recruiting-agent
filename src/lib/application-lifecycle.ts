@@ -1,13 +1,17 @@
 import { z } from "zod";
 import type {
   Application,
+  ApplicationChanges,
   ApplicationStatus,
+  ApplicationStep,
   ApplicationStore,
   CompanyPageSearch,
   CompanyStore,
   DriveFile,
   DecisionMakerStore,
   DriveGateway,
+  FunctionRun,
+  FunctionRunStore,
   GmailGateway,
   JobPageReader,
   JobStore,
@@ -16,13 +20,18 @@ import type {
   ResumeFolderStore,
   ReviewChanges,
   SavedJob,
+  StepLogStore,
 } from "./gateways";
 import {
   chooseDecisionMakers,
   type DecisionMakerSearchDeps,
   describePerson,
+  newPollBudget,
+  type PollBudget,
   savedPeopleCooldownReason,
+  WaitForRetryError,
 } from "./decision-maker-search";
+import { APPLICATION_STEPS, PASSED_TIME_LIMIT_ERROR, PREPARE_APPLICATION, SEND_APPLICATION } from "./schema";
 import { FEED_SOURCE_PREFIX } from "./firecrawl-job-feed";
 import { resumesIn } from "./resumes";
 
@@ -35,6 +44,7 @@ type ClaimDeps = { jobs: JobStore; applications: ApplicationStore; now: () => Da
 
 export type PrepareDeps = ClaimDeps &
   DecisionMakerSearchDeps & {
+    stepLogs: StepLogStore;
     jobPages: JobPageReader;
     resumeFolder: ResumeFolderStore;
     /** The Admin's Drive, reached through the Google connection. */
@@ -53,9 +63,64 @@ export async function prepare({ jobs, applications, now }: ClaimDeps, jobId: num
   return applications.claim(jobId, now());
 }
 
-/** The Admin's Retry of a failed Application, resumed from its current step. Null when it isn't failed. */
-export async function retry({ applications }: Pick<ClaimDeps, "applications">, applicationId: number) {
-  return (await applications.retry(applicationId)) ? applicationId : null;
+const APPLICATION_TIME_LIMITS_MS: Record<string, number> = {
+  [PREPARE_APPLICATION]: PREPARE_TIME_LIMIT_MS,
+  [SEND_APPLICATION]: SEND_TIME_LIMIT_MS,
+};
+const PASSED_TIME_LIMIT = "Its Function passed its time limit: Retry to resume it";
+
+const FUNCTION_FOR_STATUS: Partial<Record<ApplicationStatus, string>> = {
+  preparing: PREPARE_APPLICATION,
+  sending: SEND_APPLICATION,
+};
+
+/**
+ * Whether Modal killed the Function preparing or sending the Application: its newest run is of that Function and
+ * passed its time limit, whether still recorded as running or marked failed by a later start. A run that ended on its
+ * own doesn't count, so an Application just claimed, whose run isn't recorded yet, isn't taken for a killed one.
+ */
+function isStalled(application: Application, runs: FunctionRun[], now: Date) {
+  const [newest] = runs;
+  const functionName = FUNCTION_FOR_STATUS[application.status];
+  if (!functionName || newest?.functionName !== functionName) return false;
+  if (newest.status === "failed") return newest.error === PASSED_TIME_LIMIT_ERROR;
+  const elapsedMs = now.getTime() - newest.startedAt.getTime();
+  return newest.status === "running" && elapsedMs >= APPLICATION_TIME_LIMITS_MS[functionName];
+}
+
+/**
+ * The Application as the dashboard shows it. Modal can't report a Function it killed, so an Application whose
+ * Function passed its time limit shows as failed, as its Retry marks it.
+ */
+export function applicationAsOf(application: Application, runs: FunctionRun[], now: Date): Application {
+  return isStalled(application, runs, now) ? { ...application, status: "failed", error: PASSED_TIME_LIMIT } : application;
+}
+
+export type RetryDeps = Pick<ClaimDeps, "applications" | "now"> & {
+  runs: Pick<FunctionRunStore, "listForApplication" | "markRetried">;
+  stepLogs: StepLogStore;
+};
+
+/**
+ * Marks the Application failed, at the step its Function was killed in, when that Function passed its time limit.
+ * Marking the killed run retried is the atomic claim, so a double click on Retry fails it once and starts one Function.
+ */
+async function failIfStalled(deps: RetryDeps, applicationId: number) {
+  const application = await deps.applications.get(applicationId);
+  const [newest] = await deps.runs.listForApplication(applicationId);
+  if (!application || !newest || !isStalled(application, [newest], deps.now())) return;
+  if (!(await deps.runs.markRetried(newest.id, deps.now()))) return;
+  await deps.stepLogs.failRunning(applicationId, PASSED_TIME_LIMIT, deps.now());
+  await deps.applications.fail(applicationId, application.status, PASSED_TIME_LIMIT);
+}
+
+/**
+ * The Admin's Retry of an Application that failed while being prepared, resumed from its current step.
+ * Null when it isn't failed, or failed at the send step, which retrySend resumes.
+ */
+export async function retry(deps: RetryDeps, applicationId: number) {
+  await failIfStalled(deps, applicationId);
+  return (await deps.applications.retry(applicationId, "prepare")) ? applicationId : null;
 }
 
 /** The Admin's Cancel at Review: final, and the Job's one Application stays, so the Job can't be Prepared again. */
@@ -133,6 +198,42 @@ const chooseResumeSchema = z.object({
   resumeFilename: z.string(),
   jobSummary: z.string(),
 });
+
+/** How many times a step is tried before its Application is marked failed. */
+export const STEP_ATTEMPTS = 3;
+/** The wait before a step's next attempt, multiplied by the attempts so far. */
+export const STEP_RETRY_DELAY_MS = 10_000;
+
+const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+type StepDeps = { stepLogs: StepLogStore; now: () => Date; sleep: (ms: number) => Promise<void> };
+
+/**
+ * Runs one step, logging each attempt, and tries it again after an error, up to STEP_ATTEMPTS in all. A Stop isn't tried
+ * again, as it's an expected end, nor is an error that waits for the Admin's Retry. Attempts are numbered across Retries.
+ */
+async function runStep(deps: StepDeps, applicationId: number, step: ApplicationStep, work: () => Promise<string>) {
+  const earlier = (await deps.stepLogs.listForApplication(applicationId)).filter((log) => log.step === step).length;
+  for (let attempt = 1; ; attempt += 1) {
+    const logId = await deps.stepLogs.start({ applicationId, step, attempt: earlier + attempt, startedAt: deps.now() });
+    try {
+      const result = await work();
+      await deps.stepLogs.finish(logId, { status: "succeeded", result, error: null, finishedAt: deps.now() });
+      return;
+    } catch (error) {
+      const stopped = error instanceof Stop && error.status !== "failed";
+      await deps.stepLogs.finish(logId, {
+        status: stopped ? "stopped" : "failed",
+        result: null,
+        error: messageOf(error),
+        finishedAt: deps.now(),
+      });
+      if (error instanceof Stop || error instanceof WaitForRetryError || attempt === STEP_ATTEMPTS) throw error;
+      console.warn(`Application ${applicationId}: ${step} attempt ${earlier + attempt} failed, trying again:`, error);
+      await deps.sleep(STEP_RETRY_DELAY_MS * attempt);
+    }
+  }
+}
 
 /** An expected end to Prepare, shown on the Application rather than failing the Function. */
 class Stop extends Error {
@@ -249,7 +350,7 @@ async function findCompany(
   } else {
     console.log(`Application ${id}: Company page from the Job: ${linkedinUrl}`);
   }
-  return deps.companies.findOrCreate({ name: job.companyName, linkedinUrl });
+  return { companyId: await deps.companies.findOrCreate({ name: job.companyName, linkedinUrl }), linkedinUrl };
 }
 
 /** Stops before anything is paid for when the Job's Company is already saved and all its people are in Cooldown. */
@@ -318,63 +419,83 @@ async function checkSharing(deps: PrepareDeps) {
   }
 }
 
-async function runSteps(deps: PrepareDeps, application: Application) {
-  const { id } = application;
-  const job = await deps.jobs.get(application.jobId);
-  if (!job) throw new Error(`No Job ${application.jobId} for Application ${id}`);
-  let { currentStep: step, jobPage } = application;
-  let details: CompanySearchDetails = application;
+type StepOutcome = { result: string; changes: ApplicationChanges };
+type PrepareStep = Exclude<ApplicationStep, "send">;
 
-  if (step === "read-job") await checkSavedPeopleCooldown(deps, job);
+/** What one prepare-application run shares between its steps. */
+type PrepareRun = { job: SavedJob; polls: PollBudget };
 
-  if (step === "read-job" || step === "choose-resume") {
+/** What each Prepare step does, from the Application as the steps before it saved it. */
+const PREPARE_STEP_WORK: Record<
+  PrepareStep,
+  (deps: PrepareDeps, application: Application, run: PrepareRun) => Promise<StepOutcome>
+> = {
+  async "read-job"(deps, _application, { job }) {
+    await checkSavedPeopleCooldown(deps, job);
+    await listResumes(deps);
+    const jobPage = await readJob(deps, job);
+    const isFeedJob = job.source.startsWith(FEED_SOURCE_PREFIX);
+    return { result: isFeedJob ? "Read the Job page" : "Read the Job's collected description", changes: { jobPage } };
+  },
+
+  async "choose-resume"(deps, application, { job }) {
     const resumes = await listResumes(deps);
-    if (step === "read-job" || !jobPage) {
-      jobPage = await readJob(deps, job);
-      await deps.applications.update(id, { jobPage, currentStep: "choose-resume" });
-      console.log(`Application ${id}: read the Job page`);
-    }
+    const jobPage = application.jobPage ?? (await readJob(deps, job));
     const chosen = await chooseResume(deps, job, jobPage, resumes);
-    details = chosen;
-    step = "find-company-page";
-    await deps.applications.update(id, { ...chosen, currentStep: step });
-    console.log(`Application ${id}: chose ${chosen.resumeName}`);
-  }
+    return { result: `Chose ${chosen.resumeName}`, changes: { jobPage, ...chosen } };
+  },
 
-  let { companyId } = application;
-  if (step === "find-company-page") {
-    companyId = await findCompany(deps, id, job, details);
-    step = "find-decision-makers";
-    await deps.applications.update(id, { companyId, currentStep: step });
-    console.log(`Application ${id}: found Company ${companyId}`);
-  }
+  async "find-company-page"(deps, application, { job }) {
+    const { companyId, linkedinUrl } = await findCompany(deps, application.id, job, application);
+    return { result: `Found the Company page ${linkedinUrl}`, changes: { companyId } };
+  },
 
-  if (step === "find-decision-makers") {
+  async "find-decision-makers"(deps, { id, companyId }, { polls }) {
     const company = companyId === null ? undefined : await deps.companies.get(companyId);
     if (!company) throw new Error(`No Company ${companyId} for Application ${id}`);
-    const choice = await chooseDecisionMakers(deps, id, company);
+    const choice = await chooseDecisionMakers(deps, id, company, polls);
     if (choice.outcome === "no-contacts") {
       throw new Stop("No Decision Maker with an email address was found", "no-contacts");
     }
     if (choice.outcome === "all-in-cooldown") throw new Stop(choice.reason, "all-in-cooldown");
-    step = "write-cover-letter";
-    await deps.applications.update(id, { currentStep: step });
-    console.log(
-      `Application ${id}: chose ${choice.decisionMakers.length} Decision Maker(s): ${choice.decisionMakers.map(describePerson).join(", ")}`,
-    );
-  }
+    const people = choice.decisionMakers.map(describePerson).join(", ");
+    return { result: `Chose ${choice.decisionMakers.length} Decision Maker(s): ${people}`, changes: {} };
+  },
 
-  if (step === "write-cover-letter") {
+  async "write-cover-letter"(deps, { id }) {
     const written = await writeCoverLetter(deps, id);
-    step = "check-sharing";
-    await deps.applications.update(id, { ...written, currentStep: step });
-    console.log(`Application ${id}: wrote the Cover Letter`);
-  }
+    return { result: `Wrote "${written.subject}"`, changes: written };
+  },
 
-  if (step === "check-sharing") {
+  async "check-sharing"(deps) {
     await checkSharing(deps);
-    await deps.applications.update(id, { status: "in-review" });
-    console.log(`Application ${id}: in Review`);
+    // The step stays current, as Send has its own.
+    return { result: "The Resume Folder is shared by link: in Review", changes: { status: "in-review" } };
+  },
+};
+
+const nextStep = (step: ApplicationStep) => APPLICATION_STEPS[APPLICATION_STEPS.indexOf(step) + 1];
+
+/** Runs the Prepare steps from the current one, until the Application is in Review or stops. */
+async function runSteps(deps: PrepareDeps, application: Application) {
+  const { id } = application;
+  const job = await deps.jobs.get(application.jobId);
+  if (!job) throw new Error(`No Job ${application.jobId} for Application ${id}`);
+  const run: PrepareRun = { job, polls: newPollBudget() };
+
+  let current: Application | undefined = application;
+  while (current?.status === "preparing") {
+    const saved: Application = current;
+    const step = saved.currentStep;
+    if (step === "send") throw new Error(`Application ${id} is at the send step, so it can't be prepared`);
+    await runStep(deps, id, step, async () => {
+      const { result, changes } = await PREPARE_STEP_WORK[step](deps, saved, run);
+      const advance = changes.status === undefined ? { currentStep: nextStep(step) } : {};
+      await deps.applications.update(id, { ...changes, ...advance });
+      console.log(`Application ${id}: ${step}: ${result}`);
+      return result;
+    });
+    current = await deps.applications.get(id);
   }
 }
 
@@ -402,6 +523,7 @@ export async function runPreparation(deps: PrepareDeps, applicationId: number) {
 }
 
 export type SendDeps = Pick<ClaimDeps, "applications" | "now"> & {
+  stepLogs: StepLogStore;
   decisionMakers: DecisionMakerStore;
   /** The Admin's Gmail, reached through the Google connection. */
   gmail: () => Promise<GmailGateway>;
@@ -411,6 +533,7 @@ export type SendDeps = Pick<ClaimDeps, "applications" | "now"> & {
 };
 
 export type SendClaim = { outcome: "claimed" } | { outcome: "not-in-review" } | { outcome: "refused"; error: string };
+export type RetrySendClaim = { outcome: "claimed" } | { outcome: "not-failed" } | { outcome: "refused"; error: string };
 
 const SEND_NOT_ALLOWED = "Sending is turned off here: set ALLOW_SEND=true to send";
 
@@ -418,7 +541,7 @@ const SEND_NOT_ALLOWED = "Sending is turned off here: set ALLOW_SEND=true to sen
  * The Admin's Send: checks the Application can be sent, then atomically moves it from Review to sending, which locks it.
  * Nothing is emailed until the send-application Function runs.
  */
-export async function send(deps: Omit<SendDeps, "gmail" | "sleep" | "now">, applicationId: number): Promise<SendClaim> {
+export async function send(deps: Pick<SendDeps, "applications" | "decisionMakers" | "allowSend">, applicationId: number): Promise<SendClaim> {
   if (!deps.allowSend) return { outcome: "refused", error: SEND_NOT_ALLOWED };
   const application = await deps.applications.get(applicationId);
   if (application?.status !== "in-review") return { outcome: "not-in-review" };
@@ -432,6 +555,19 @@ export async function send(deps: Omit<SendDeps, "gmail" | "sleep" | "now">, appl
   return (await deps.applications.claimSend(applicationId)) ? { outcome: "claimed" } : { outcome: "not-in-review" };
 }
 
+/**
+ * The Admin's Retry of an Application that failed at the send step: atomically moves it back to sending, still locked.
+ * The send-application Function then emails only the recipients not emailed yet.
+ */
+export async function retrySend(
+  deps: RetryDeps & Pick<SendDeps, "allowSend">,
+  applicationId: number,
+): Promise<RetrySendClaim> {
+  if (!deps.allowSend) return { outcome: "refused", error: SEND_NOT_ALLOWED };
+  await failIfStalled(deps, applicationId);
+  return (await deps.applications.retry(applicationId, "send")) ? { outcome: "claimed" } : { outcome: "not-failed" };
+}
+
 /** The Cover Letter for one recipient: {{name}} becomes their first name and {{resume_link}} the Resume's Drive link. */
 function personalize(coverLetter: string, name: string, resumeLink: string) {
   const firstName = name.trim().split(/\s+/)[0];
@@ -440,7 +576,8 @@ function personalize(coverLetter: string, name: string, resumeLink: string) {
 
 /**
  * The send-application Function: emails each recipient not yet sent, a few seconds apart, recording each one
- * immediately after its email goes out. An error is saved on the Application, which stays locked in sending.
+ * immediately after its email goes out, so no attempt or Retry emails anyone twice. An Application that still fails
+ * is marked failed at the send step, staying locked until retrySend.
  */
 export async function runSending(deps: SendDeps, applicationId: number) {
   if (!deps.allowSend) throw new Error(SEND_NOT_ALLOWED);
@@ -450,24 +587,28 @@ export async function runSending(deps: SendDeps, applicationId: number) {
     console.log(`Application ${applicationId}: ${application.status}, nothing to send`);
     return;
   }
+  const { subject, coverLetter, resumeLink } = application;
 
   try {
-    const { subject, coverLetter, resumeLink } = application;
-    if (!subject || !coverLetter || !resumeLink) throw new Error(`Application ${applicationId} isn't ready to send`);
-    const unsent = (await deps.decisionMakers.listForApplication(applicationId)).filter(({ sentAt }) => !sentAt);
-    const gmail = await deps.gmail();
-    for (const [index, recipient] of unsent.entries()) {
-      if (!recipient.email) throw new Error(`${recipient.name} has no email address`);
-      if (index > 0) await deps.sleep(SEND_GAP_MS);
-      await gmail.send({ to: recipient.email, subject, body: personalize(coverLetter, recipient.name, resumeLink) });
-      await deps.decisionMakers.recordSent(applicationId, recipient.id, deps.now());
-      console.log(`Application ${applicationId}: emailed ${describePerson(recipient)}`);
-    }
-    await deps.applications.update(applicationId, { status: "sent", error: null });
+    await runStep(deps, applicationId, "send", async () => {
+      if (!subject || !coverLetter || !resumeLink) throw new Error(`Application ${applicationId} isn't ready to send`);
+      const unsent = (await deps.decisionMakers.listForApplication(applicationId)).filter(({ sentAt }) => !sentAt);
+      const gmail = await deps.gmail();
+      const emailed: string[] = [];
+      for (const [index, recipient] of unsent.entries()) {
+        if (!recipient.email) throw new Error(`${recipient.name} has no email address`);
+        if (index > 0) await deps.sleep(SEND_GAP_MS);
+        await gmail.send({ to: recipient.email, subject, body: personalize(coverLetter, recipient.name, resumeLink) });
+        await deps.decisionMakers.recordSent(applicationId, recipient.id, deps.now());
+        emailed.push(describePerson(recipient));
+        console.log(`Application ${applicationId}: emailed ${describePerson(recipient)}`);
+      }
+      await deps.applications.update(applicationId, { status: "sent", error: null });
+      return emailed.length > 0 ? `Emailed ${emailed.join(", ")}` : "Everyone was already emailed";
+    });
     console.log(`Application ${applicationId}: sent`);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    await deps.applications.update(applicationId, { error: message });
+    await deps.applications.update(applicationId, { status: "failed", error: messageOf(error) });
     throw error;
   }
 }

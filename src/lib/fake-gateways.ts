@@ -8,6 +8,12 @@ import type {
   Application,
   ApplicationChanges,
   ApplicationStore,
+  ApplicationStatus,
+  RetryTarget,
+  StepLog,
+  StepLogEnd,
+  StepLogStart,
+  StepLogStore,
   ReviewChanges,
   Company,
   CompanyPageSearch,
@@ -52,7 +58,7 @@ import type {
   TelegramGateway,
   TelegramLink,
 } from "./gateways";
-import { COLLECT_JOBS, type JobSearch } from "./schema";
+import { COLLECT_JOBS, type JobSearch, PASSED_TIME_LIMIT_ERROR, RETRIED_AFTER_TIME_LIMIT_ERROR } from "./schema";
 
 export class FakeFunctionRunStore implements FunctionRunStore {
   private runs: FunctionRun[] = [];
@@ -62,7 +68,7 @@ export class FakeFunctionRunStore implements FunctionRunStore {
       run.functionName === functionName &&
       run.status === "running" &&
       run.startedAt.getTime() <= startedAt.getTime() - timeLimitMs
-        ? { ...run, status: "failed", finishedAt: startedAt, error: "Passed its time limit" }
+        ? { ...run, status: "failed", finishedAt: startedAt, error: PASSED_TIME_LIMIT_ERROR }
         : run,
     );
     const active = this.runs.some((run) => run.functionName === COLLECT_JOBS && run.status === "running");
@@ -87,6 +93,17 @@ export class FakeFunctionRunStore implements FunctionRunStore {
 
   async list() {
     return this.runs;
+  }
+
+  async listForApplication(applicationId: number) {
+    return this.runs.filter((run) => run.applicationId === applicationId).reverse();
+  }
+
+  async markRetried(id: number, at: Date) {
+    const run = this.runs.find((saved) => saved.id === id);
+    if (!run || (run.status !== "running" && run.error !== PASSED_TIME_LIMIT_ERROR)) return false;
+    await this.finish(id, { status: "failed", finishedAt: run.finishedAt ?? at, error: RETRIED_AFTER_TIME_LIMIT_ERROR });
+    return true;
   }
 }
 
@@ -358,10 +375,18 @@ export class FakeApplicationStore implements ApplicationStore {
     return this.applications.find((application) => application.id === id);
   }
 
-  async retry(id: number) {
+  async retry(id: number, target: RetryTarget) {
     const application = this.applications.find((saved) => saved.id === id);
     if (application?.status !== "failed") return false;
-    await this.update(id, { status: "preparing", error: null });
+    if ((application.currentStep === "send") !== (target === "send")) return false;
+    await this.update(id, { status: target === "send" ? "sending" : "preparing", error: null });
+    return true;
+  }
+
+  async fail(id: number, from: ApplicationStatus, error: string) {
+    const application = this.applications.find((saved) => saved.id === id);
+    if (application?.status !== from) return false;
+    await this.update(id, { status: "failed", error });
     return true;
   }
 
@@ -391,7 +416,7 @@ export class FakeApplicationStore implements ApplicationStore {
   async claimSend(id: number) {
     const application = this.applications.find((saved) => saved.id === id);
     if (application?.status !== "in-review") return false;
-    await this.update(id, { status: "sending" });
+    await this.update(id, { status: "sending", currentStep: "send" });
     return true;
   }
 
@@ -402,6 +427,32 @@ export class FakeApplicationStore implements ApplicationStore {
   async update(id: number, changes: ApplicationChanges) {
     this.applications = this.applications.map((application) =>
       application.id === id ? { ...application, ...changes } : application,
+    );
+  }
+}
+
+export class FakeStepLogStore implements StepLogStore {
+  logs: StepLog[] = [];
+
+  async start(log: StepLogStart) {
+    const id = this.logs.length + 1;
+    this.logs.push({ ...log, id, status: "running", result: null, error: null, finishedAt: null });
+    return id;
+  }
+
+  async finish(id: number, end: StepLogEnd) {
+    this.logs = this.logs.map((log) => (log.id === id ? { ...log, ...end } : log));
+  }
+
+  async listForApplication(applicationId: number) {
+    return this.logs.filter((log) => log.applicationId === applicationId);
+  }
+
+  async failRunning(applicationId: number, error: string, finishedAt: Date) {
+    this.logs = this.logs.map((log) =>
+      log.applicationId === applicationId && log.status === "running"
+        ? { ...log, status: "failed", error, finishedAt }
+        : log,
     );
   }
 }
@@ -478,7 +529,7 @@ export class FakeLlmSettingsStore implements LlmSettingsStore {
   }
 }
 
-/** Answers each request with the next answer queued here, parsed with the request's schema. */
+/** Answers each request with the next answer queued here, parsed with the request's schema, or throws it when it's an Error. */
 export class FakeLlm implements LlmGateway {
   requests: LlmRequest<unknown>[] = [];
   answers: unknown[] = [];
@@ -486,7 +537,9 @@ export class FakeLlm implements LlmGateway {
   async generate<T>(request: LlmRequest<T>) {
     this.requests.push(request);
     if (this.answers.length === 0) throw new Error("The LLM has no answer queued");
-    return request.schema.parse(this.answers.shift());
+    const answer = this.answers.shift();
+    if (answer instanceof Error) throw answer;
+    return request.schema.parse(answer);
   }
 }
 
@@ -529,6 +582,8 @@ export class FakeActor<Input, Result> implements ActorGateway<Input, Result> {
   started: { runId: string; input: Input; token: string }[] = [];
   private resultsByInput = new Map<string, Result[]>();
   statuses = new Map<string, ActorRunStatus[]>();
+  /** Errors the next starts throw, in turn. */
+  startErrors: Error[] = [];
   private polls = new Map<string, number>();
 
   constructor(public actor: string) {}
@@ -549,6 +604,8 @@ export class FakeActor<Input, Result> implements ActorGateway<Input, Result> {
   }
 
   async start(input: Input, token: string) {
+    const error = this.startErrors.shift();
+    if (error) throw error;
     const runId = `${this.actor}-run-${this.started.length + 1}`;
     this.started.push({ runId, input, token });
     return runId;
