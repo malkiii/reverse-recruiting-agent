@@ -1,6 +1,6 @@
 import { setTimeout } from "node:timers/promises";
 import { z } from "zod";
-import { prepare, retry, runPreparation } from "../lib/application-lifecycle";
+import { prepare, retry, runPreparation, runSending, send } from "../lib/application-lifecycle";
 import {
   drizzleActorRunStore,
   drizzleApplicationStore,
@@ -22,7 +22,7 @@ import { parseFunctionsEnv } from "../lib/env";
 import { firecrawlCompanyPageSearch } from "../lib/firecrawl-company-page";
 import { firecrawlJobFeedReader } from "../lib/firecrawl-job-feed";
 import { firecrawlJobPageReader } from "../lib/firecrawl-job-page";
-import { googleDrive, googleOAuth } from "../lib/google";
+import { googleDrive, googleGmail, googleOAuth } from "../lib/google";
 import { googleAccessToken } from "../lib/google-connection";
 import { glassdoorJobBoard } from "../lib/glassdoor-job-board";
 import { webImageGateway } from "../lib/images";
@@ -31,7 +31,7 @@ import { runCollection } from "../lib/job-collection";
 import { linkedInJobBoard } from "../lib/linkedin-job-board";
 import { llmGateway } from "../lib/llm";
 import { pdfReader } from "../lib/pdf";
-import { COLLECT_JOBS, PREPARE_APPLICATION } from "../lib/schema";
+import { COLLECT_JOBS, PREPARE_APPLICATION, SEND_APPLICATION } from "../lib/schema";
 import { telegramGateway } from "../lib/telegram";
 import { InvalidFunctionRequestError } from "./accept-function-request";
 
@@ -49,6 +49,8 @@ const prepareRequestSchema = z.union([
   z.object({ jobId: z.number().int().positive() }),
   z.object({ applicationId: z.number().int().positive() }),
 ]);
+
+const sendRequestSchema = z.object({ applicationId: z.number().int().positive() });
 
 function requireApplication(applicationId: number | undefined) {
   if (applicationId === undefined) throw new Error("No Application was given");
@@ -74,6 +76,21 @@ export const functions = new Map<string, FunctionDefinition>([
       work: (services, applicationId) => runPreparation(services, requireApplication(applicationId)),
     },
   ],
+  [
+    SEND_APPLICATION,
+    {
+      timeLimitMs: FUNCTION_TIME_LIMITS_MS[SEND_APPLICATION],
+      async claim(services, body) {
+        const request = sendRequestSchema.safeParse(body);
+        if (!request.success) throw new InvalidFunctionRequestError("The request body needs a numeric applicationId");
+        const { applicationId } = request.data;
+        const claim = await send(services, applicationId);
+        if (claim.outcome === "refused") throw new InvalidFunctionRequestError(claim.error);
+        return claim.outcome === "claimed" ? applicationId : null;
+      },
+      work: (services, applicationId) => runSending(services, requireApplication(applicationId)),
+    },
+  ],
 ]);
 
 export function functionServices() {
@@ -91,6 +108,7 @@ export function functionServices() {
     GEMINI_API_KEY,
     OPENAI_API_KEY,
     GROQ_API_KEY,
+    ALLOW_SEND,
   } = parseFunctionsEnv(process.env);
   const now = () => new Date();
   const googleConnection = {
@@ -132,5 +150,7 @@ export function functionServices() {
     drive: async () => googleDrive(await accessToken()),
     llm: async () => llmGateway(await llmSettings.get(), llmApiKeys),
     pdfs: pdfReader,
+    gmail: async () => googleGmail(await accessToken()),
+    allowSend: ALLOW_SEND,
   };
 }

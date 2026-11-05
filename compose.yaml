@@ -14,3 +14,6 @@ services:
     build: .
     command: npm run worker
     env_file: .env.local
+    environment:
+      # Off in Compose, so testing can't email real Decision Makers. Start with ALLOW_SEND=true to send.
+      ALLOW_SEND: ${ALLOW_SEND:-false}

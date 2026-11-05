@@ -19,6 +19,7 @@ Copy `.env.example` to `.env.local`. The dashboard and Functions each validate o
 | `TELEGRAM_BOT_TOKEN` | Functions            | Telegram bot that sends Failure Alerts            |
 | `TELEGRAM_CHAT_ID`   | Functions            | The Admin's Telegram chat                         |
 | `DASHBOARD_URL`      | Functions            | Public dashboard URL, linked from Failure Alerts  |
+| `ALLOW_SEND`         | Functions            | `true` lets Send email Decision Makers; anything else refuses it |
 | `DASHBOARD_PASSWORD` | Dashboard            | Password for signing in                           |
 | `FUNCTIONS_BASE_URL` | Dashboard            | Modal web endpoint, or the local worker           |
 
@@ -50,7 +51,7 @@ Apply a migration from dev with `npm run db:migrate` before pushing code that ne
 docker compose up --build
 ```
 
-This starts the dashboard on http://localhost:3000 and the worker behind it, using `.env.local`. There is no scheduler and no ngrok. Compose points `FUNCTIONS_BASE_URL` at the worker itself.
+This starts the dashboard on http://localhost:3000 and the worker behind it, using `.env.local`. There is no scheduler and no ngrok. Compose points `FUNCTIONS_BASE_URL` at the worker itself, and forces `ALLOW_SEND` off so testing can't email real Decision Makers. Start it with `ALLOW_SEND=true docker compose up` to send.
 
 Run the checks with `npm test` and `npm run typecheck`.
 
@@ -62,7 +63,7 @@ A push to `master` runs `.github/workflows/deploy.yml`, which applies migrations
 
 | Where          | Secret                                                                                                        | Purpose                                   |
 | -------------- | ------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
-| Modal          | `DATABASE_URL`, `FUNCTIONS_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `APIFY_TOKENS`, `FIRECRAWL_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `DASHBOARD_URL` | Runtime variables for Functions           |
+| Modal          | `DATABASE_URL`, `FUNCTIONS_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `APIFY_TOKENS`, `FIRECRAWL_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `DASHBOARD_URL`, `ALLOW_SEND=true` | Runtime variables for Functions           |
 | Vercel         | `DATABASE_URL`, `FUNCTIONS_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `DASHBOARD_PASSWORD`, `FUNCTIONS_BASE_URL` | Runtime variables for the dashboard       |
 | GitHub Actions | `DIRECT_DATABASE_URL`                                                                                         | Direct database connection for migrations |
 | GitHub Actions | `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET`                                                                        | Modal token for `modal deploy`            |
@@ -70,7 +71,7 @@ A push to `master` runs `.github/workflows/deploy.yml`, which applies migrations
 
 GitHub-hosted runners have no IPv6, and Supabase's direct host is IPv6-only without its IPv4 add-on. Without the add-on, set `DIRECT_DATABASE_URL` to the session pooler connection, port 5432.
 
-Create the Modal Secret, with `modal.env` holding only its eight variables:
+Create the Modal Secret, with `modal.env` holding only its nine variables:
 
 ```sh
 modal secret create reverse-recruiting-agent --from-dotenv modal.env

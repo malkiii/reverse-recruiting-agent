@@ -16,6 +16,7 @@ import {
 
 export const COLLECT_JOBS = "collect-jobs";
 export const PREPARE_APPLICATION = "prepare-application";
+export const SEND_APPLICATION = "send-application";
 
 export const LLM_PROVIDERS = ["claude", "gemini", "openai", "groq"] as const;
 export type LlmProvider = (typeof LLM_PROVIDERS)[number];
@@ -227,6 +228,8 @@ export const applicationRecipients = pgTable(
     decisionMakerId: bigint("decision_maker_id", { mode: "number" })
       .notNull()
       .references(() => decisionMakers.id),
+    /** When their email went out, so a Send never emails them twice. */
+    sentAt: timestamp("sent_at", { withTimezone: true }),
   },
   (table) => [primaryKey({ columns: [table.applicationId, table.decisionMakerId] })],
 ).enableRLS();

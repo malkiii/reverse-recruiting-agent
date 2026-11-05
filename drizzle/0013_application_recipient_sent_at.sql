@@ -1,0 +1,1 @@
+ALTER TABLE "application_recipients" ADD COLUMN "sent_at" timestamp with time zone;

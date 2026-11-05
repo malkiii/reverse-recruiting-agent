@@ -26,6 +26,11 @@ const functionsSchema = sharedSchema.extend({
   GEMINI_API_KEY: optionalKey,
   OPENAI_API_KEY: optionalKey,
   GROQ_API_KEY: optionalKey,
+  // Off unless set to "true", so Compose and any environment that forgets it can't email Decision Makers.
+  ALLOW_SEND: z
+    .string()
+    .optional()
+    .transform((value) => value === "true"),
 });
 
 const dashboardSchema = sharedSchema.extend({

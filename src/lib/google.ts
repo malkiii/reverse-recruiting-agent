@@ -1,4 +1,4 @@
-import type { DriveFile, DriveFolder, DriveGateway, GoogleOAuthGateway, GrantedTokens } from "./gateways";
+import type { DriveFile, DriveFolder, DriveGateway, Email, GmailGateway, GoogleOAuthGateway, GrantedTokens } from "./gateways";
 
 /** The only scopes the agent asks for: it sends Applications and reads the Resume Folder. */
 export const GOOGLE_SCOPES = [
@@ -114,6 +114,38 @@ export function googleDrive(accessToken: string): DriveGateway {
       const response = await fetch(url, { headers: { authorization: `Bearer ${accessToken}` } });
       if (!response.ok) throw new Error(`Google Drive refused the download: ${response.status} ${await response.text()}`);
       return new Uint8Array(await response.arrayBuffer());
+    },
+  };
+}
+
+const GMAIL_SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send";
+
+/** Line breaks would let a value add its own headers, so they're folded into spaces. */
+const headerValue = (value: string) => value.replace(/[\r\n]+/g, " ").trim();
+
+/** An RFC 2822 plain text message, UTF-8 throughout. Gmail adds the From header for the Admin's account. */
+export function mimeMessage({ to, subject, body }: Email) {
+  const base64 = (text: string) => Buffer.from(text, "utf8").toString("base64");
+  return [
+    `To: ${headerValue(to)}`,
+    `Subject: =?UTF-8?B?${base64(headerValue(subject))}?=`,
+    "MIME-Version: 1.0",
+    'Content-Type: text/plain; charset="UTF-8"',
+    "Content-Transfer-Encoding: base64",
+    "",
+    base64(body.replace(/\r?\n/g, "\r\n")),
+  ].join("\r\n");
+}
+
+export function googleGmail(accessToken: string): GmailGateway {
+  return {
+    async send(email: Email) {
+      const response = await fetch(GMAIL_SEND_URL, {
+        method: "POST",
+        headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
+        body: JSON.stringify({ raw: Buffer.from(mimeMessage(email), "utf8").toString("base64url") }),
+      });
+      if (!response.ok) throw new Error(`Gmail refused the email: ${response.status} ${await response.text()}`);
     },
   };
 }

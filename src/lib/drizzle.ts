@@ -9,6 +9,7 @@ import type {
   FoundPerson,
   ApplicationChanges,
   ApplicationStore,
+  ReviewChanges,
   Company,
   CompanyStore,
   LlmChoice,
@@ -386,6 +387,41 @@ export function drizzleApplicationStore(databaseUrl: string): ApplicationStore {
       return cancelled.length > 0;
     },
 
+    async edit(id: number, changes: ReviewChanges) {
+      // Only an Application in Review matches, so nothing changes once Send has claimed it.
+      const edited = await client(databaseUrl)
+        .update(applications)
+        .set(changes)
+        .where(and(eq(applications.id, id), eq(applications.status, "in-review")))
+        .returning({ id: applications.id });
+      return edited.length > 0;
+    },
+
+    async removeRecipient(id: number, decisionMakerId: number) {
+      // Only while the Application is in Review, so a Send that has started keeps every recipient.
+      const removed = await client(databaseUrl)
+        .delete(applicationRecipients)
+        .where(
+          and(
+            eq(applicationRecipients.applicationId, id),
+            eq(applicationRecipients.decisionMakerId, decisionMakerId),
+            sql`exists (select 1 from ${applications} where ${applications.id} = ${id} and ${applications.status} = 'in-review')`,
+          ),
+        )
+        .returning({ id: applicationRecipients.decisionMakerId });
+      return removed.length > 0;
+    },
+
+    async claimSend(id: number) {
+      // Only an Application in Review matches, so a double click on Send claims it once.
+      const claimed = await client(databaseUrl)
+        .update(applications)
+        .set({ status: "sending" })
+        .where(and(eq(applications.id, id), eq(applications.status, "in-review")))
+        .returning({ id: applications.id });
+      return claimed.length > 0;
+    },
+
     async update(id: number, changes: ApplicationChanges) {
       await client(databaseUrl).update(applications).set(changes).where(eq(applications.id, id));
     },
@@ -471,12 +507,27 @@ export function drizzleDecisionMakerStore(databaseUrl: string): DecisionMakerSto
 
     async listForApplication(applicationId: number) {
       const rows = await client(databaseUrl)
-        .select({ decisionMaker: decisionMakers })
+        .select({ decisionMaker: decisionMakers, sentAt: applicationRecipients.sentAt })
         .from(applicationRecipients)
         .innerJoin(decisionMakers, eq(decisionMakers.id, applicationRecipients.decisionMakerId))
         .where(eq(applicationRecipients.applicationId, applicationId))
         .orderBy(asc(decisionMakers.id));
-      return rows.map(({ decisionMaker }) => decisionMaker);
+      return rows.map(({ decisionMaker, sentAt }) => ({ ...decisionMaker, sentAt }));
+    },
+
+    async recordSent(applicationId: number, decisionMakerId: number, sentAt: Date) {
+      await client(databaseUrl).transaction(async (tx) => {
+        await tx
+          .update(applicationRecipients)
+          .set({ sentAt })
+          .where(
+            and(
+              eq(applicationRecipients.applicationId, applicationId),
+              eq(applicationRecipients.decisionMakerId, decisionMakerId),
+            ),
+          );
+        await tx.update(decisionMakers).set({ lastEmailedAt: sentAt }).where(eq(decisionMakers.id, decisionMakerId));
+      });
     },
   };
 }

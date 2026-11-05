@@ -10,6 +10,7 @@ APP_DIR = "/app"
 CLI = ["npx", "tsx", "src/functions/cli.ts"]
 COLLECT_JOBS_TIMEOUT = 30 * 60  # COLLECTION_TIME_LIMIT_MS in src/lib/job-collection.ts
 PREPARE_APPLICATION_TIMEOUT = 30 * 60  # PREPARE_TIME_LIMIT_MS in src/lib/application-lifecycle.ts
+SEND_APPLICATION_TIMEOUT = 10 * 60  # SEND_TIME_LIMIT_MS in src/lib/application-lifecycle.ts
 # Read where `modal deploy` runs, because Modal resolves schedules at deploy time.
 TIMEZONE = os.environ.get("TIMEZONE") or "UTC"
 
@@ -33,6 +34,11 @@ def prepare_application(run_id: int, application_id: int):
     subprocess.run(
         [*CLI, "run", "prepare-application", str(run_id), str(application_id)], cwd=APP_DIR, check=True
     )
+
+
+@app.function(timeout=SEND_APPLICATION_TIMEOUT)
+def send_application(run_id: int, application_id: int):
+    subprocess.run([*CLI, "run", "send-application", str(run_id), str(application_id)], cwd=APP_DIR, check=True)
 
 
 # Job Collection keeps only Jobs posted today, so earlier runs see fewer of them.
@@ -81,5 +87,10 @@ def web():
         body = await request.body()
         # The body can only be read in an async route, so the blocking accept runs in a thread like the others.
         return await run_in_threadpool(accept, "prepare-application", prepare_application, authorization, body)
+
+    @api.post("/functions/send-application")
+    async def start_send_application(request: Request, authorization: str | None = Header(default=None)):
+        body = await request.body()
+        return await run_in_threadpool(accept, "send-application", send_application, authorization, body)
 
     return api

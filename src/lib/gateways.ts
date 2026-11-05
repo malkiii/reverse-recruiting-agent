@@ -69,6 +69,13 @@ export interface DriveGateway {
   download(fileId: string): Promise<Uint8Array>;
 }
 
+export type Email = { to: string; subject: string; body: string };
+
+export interface GmailGateway {
+  /** Sends a plain text email from the Admin's Gmail. */
+  send(email: Email): Promise<void>;
+}
+
 export interface PdfReader {
   /** The PDF's text as markdown, read without the LLM. Throws when it isn't a readable PDF. */
   toMarkdown(pdf: Uint8Array): Promise<string>;
@@ -172,6 +179,8 @@ export type Application = typeof applications.$inferSelect;
 export type ApplicationStatus = Application["status"];
 export type PrepareStep = Application["currentStep"];
 export type ApplicationChanges = Partial<Omit<Application, "id" | "jobId" | "createdAt">>;
+/** What the Admin can change in Review, besides removing a Decision Maker. */
+export type ReviewChanges = Partial<Pick<Application, "subject" | "coverLetter" | "resumeFileId" | "resumeName" | "resumeLink">>;
 
 export interface ApplicationStore {
   /** Atomically creates the Job's one Application, as preparing. Null when the Job already has one. */
@@ -181,6 +190,12 @@ export interface ApplicationStore {
   retry(id: number): Promise<boolean>;
   /** Atomically sets an Application in Review to cancelled. False when it isn't in Review. */
   cancel(id: number): Promise<boolean>;
+  /** Atomically saves the Admin's changes to an Application in Review. False when it isn't in Review. */
+  edit(id: number, changes: ReviewChanges): Promise<boolean>;
+  /** Atomically removes a Decision Maker from an Application in Review, keeping them at the Company. False when it isn't in Review. */
+  removeRecipient(id: number, decisionMakerId: number): Promise<boolean>;
+  /** Atomically moves an Application from Review to sending, so a double click on Send acts once. False when it isn't in Review. */
+  claimSend(id: number): Promise<boolean>;
   update(id: number, changes: ApplicationChanges): Promise<void>;
 }
 
@@ -220,6 +235,8 @@ export type EmployeesActor = ActorGateway<EmployeeSearch, Person>;
 export type EmailsActor = ActorGateway<string[], FoundEmail>;
 
 export type DecisionMaker = typeof decisionMakers.$inferSelect;
+/** A Decision Maker an Application emails, and when their email went out. */
+export type Recipient = DecisionMaker & { sentAt: Date | null };
 export type FoundPerson = Pick<DecisionMaker, "name" | "headline" | "profileUrl" | "email" | "jobFunction">;
 
 export interface DecisionMakerStore {
@@ -234,7 +251,9 @@ export interface DecisionMakerStore {
   peopleFoundAt(companyId: number): Promise<Date | null>;
   /** Makes them the Application's Decision Makers. */
   addToApplication(applicationId: number, decisionMakerIds: number[]): Promise<void>;
-  listForApplication(applicationId: number): Promise<DecisionMaker[]>;
+  listForApplication(applicationId: number): Promise<Recipient[]>;
+  /** Records the recipient's email as sent and starts the Decision Maker's Cooldown, together. */
+  recordSent(applicationId: number, decisionMakerId: number, sentAt: Date): Promise<void>;
 }
 
 export interface CompanyPageSearch {

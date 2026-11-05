@@ -6,12 +6,15 @@ import type {
   CompanyPageSearch,
   CompanyStore,
   DriveFile,
+  DecisionMakerStore,
   DriveGateway,
+  GmailGateway,
   JobPageReader,
   JobStore,
   LlmGateway,
   PdfReader,
   ResumeFolderStore,
+  ReviewChanges,
   SavedJob,
 } from "./gateways";
 import {
@@ -24,6 +27,9 @@ import { FEED_SOURCE_PREFIX } from "./firecrawl-job-feed";
 import { resumesIn } from "./resumes";
 
 export const PREPARE_TIME_LIMIT_MS = 30 * 60_000;
+export const SEND_TIME_LIMIT_MS = 10 * 60_000;
+/** The pause between two emails of one Send, so it doesn't look like a bulk blast. */
+export const SEND_GAP_MS = 5_000;
 
 type ClaimDeps = { jobs: JobStore; applications: ApplicationStore; now: () => Date };
 
@@ -56,6 +62,60 @@ export async function retry({ applications }: Pick<ClaimDeps, "applications">, a
 export async function cancel({ applications }: Pick<ClaimDeps, "applications">, applicationId: number) {
   return applications.cancel(applicationId);
 }
+
+export type EditResult = { saved: true } | { saved: false; error: string };
+
+export type ReviewEdit = { subject?: string; coverLetter?: string; resumeFileId?: string };
+
+export type EditDeps = Pick<ClaimDeps, "applications"> & Pick<PrepareDeps, "resumeFolder" | "drive">;
+
+/** The Admin's edit in Review. Refused once the Application has left Review. */
+export async function edit(deps: EditDeps, applicationId: number, { subject, coverLetter, resumeFileId }: ReviewEdit) {
+  const changes: ReviewChanges = {};
+  if (subject !== undefined) {
+    if (!subject.trim()) return refused(EMPTY_SUBJECT);
+    changes.subject = subject.trim();
+  }
+  if (coverLetter !== undefined) {
+    if (!hasPlaceholders(coverLetter)) return refused(MISSING_PLACEHOLDERS);
+    changes.coverLetter = coverLetter.trim();
+  }
+  if (resumeFileId !== undefined) {
+    // Looked up again rather than trusted from the form, so only a listed Resume is ever sent.
+    const folder = await deps.resumeFolder.get();
+    const resumes = folder ? resumesIn(await (await deps.drive()).listFiles(folder.id)) : [];
+    const resume = resumes.find(({ id }) => id === resumeFileId);
+    if (!resume) return refused(NOT_A_RESUME);
+    Object.assign(changes, { resumeFileId: resume.id, resumeName: resume.name, resumeLink: resume.webViewLink });
+  }
+  // An empty change saves nothing, but is still refused outside Review.
+  const saved =
+    Object.keys(changes).length === 0
+      ? (await deps.applications.get(applicationId))?.status === "in-review"
+      : await deps.applications.edit(applicationId, changes);
+  return saved ? SAVED : refused(NOT_IN_REVIEW);
+}
+
+export type RemoveDeps = Pick<ClaimDeps, "applications"> & Pick<PrepareDeps, "decisionMakers">;
+
+/** The Admin's removal of a Decision Maker in Review. There's no way to add one, as that would skip the Cooldown check and email lookup. */
+export async function removeDecisionMaker(deps: RemoveDeps, applicationId: number, decisionMakerId: number) {
+  const application = await deps.applications.get(applicationId);
+  if (application?.status !== "in-review") return refused(NOT_IN_REVIEW);
+  const recipients = await deps.decisionMakers.listForApplication(applicationId);
+  if (!recipients.some(({ id }) => id === decisionMakerId)) return refused(NOT_A_RECIPIENT);
+  if (recipients.length === 1) return refused(LAST_RECIPIENT);
+  return (await deps.applications.removeRecipient(applicationId, decisionMakerId)) ? SAVED : refused(NOT_IN_REVIEW);
+}
+
+const SAVED: EditResult = { saved: true };
+const refused = (error: string): EditResult => ({ saved: false, error });
+const NOT_IN_REVIEW = "Only an Application in Review can be edited";
+const NOT_A_RECIPIENT = "That person isn't one of this Application's Decision Makers";
+const LAST_RECIPIENT = "An Application needs a Decision Maker: Cancel it instead";
+const EMPTY_SUBJECT = "The subject can't be empty";
+const NOT_A_RESUME = "That file isn't one of the Resumes in your Resume Folder";
+const MISSING_PLACEHOLDERS = "The Cover Letter needs {{name}} in its first line and {{resume_link}} at its end";
 
 const xml = (tag: string, content: string) => `<${tag}>\n${content}\n</${tag}>`;
 
@@ -338,5 +398,76 @@ export async function runPreparation(deps: PrepareDeps, applicationId: number) {
     await deps.applications.update(applicationId, { status, error: message });
     console.log(`Application ${applicationId}: ${status}: ${message}`);
     if (!(error instanceof Stop)) throw error;
+  }
+}
+
+export type SendDeps = Pick<ClaimDeps, "applications" | "now"> & {
+  decisionMakers: DecisionMakerStore;
+  /** The Admin's Gmail, reached through the Google connection. */
+  gmail: () => Promise<GmailGateway>;
+  sleep: (ms: number) => Promise<void>;
+  /** ALLOW_SEND: off in Compose, so testing can't email real Decision Makers. */
+  allowSend: boolean;
+};
+
+export type SendClaim = { outcome: "claimed" } | { outcome: "not-in-review" } | { outcome: "refused"; error: string };
+
+const SEND_NOT_ALLOWED = "Sending is turned off here: set ALLOW_SEND=true to send";
+
+/**
+ * The Admin's Send: checks the Application can be sent, then atomically moves it from Review to sending, which locks it.
+ * Nothing is emailed until the send-application Function runs.
+ */
+export async function send(deps: Omit<SendDeps, "gmail" | "sleep" | "now">, applicationId: number): Promise<SendClaim> {
+  if (!deps.allowSend) return { outcome: "refused", error: SEND_NOT_ALLOWED };
+  const application = await deps.applications.get(applicationId);
+  if (application?.status !== "in-review") return { outcome: "not-in-review" };
+  if (!application.subject?.trim() || !application.coverLetter || !hasPlaceholders(application.coverLetter)) {
+    return { outcome: "refused", error: MISSING_PLACEHOLDERS };
+  }
+  if (!application.resumeLink) return { outcome: "refused", error: "The Application has no Resume link" };
+  if ((await deps.decisionMakers.listForApplication(applicationId)).length === 0) {
+    return { outcome: "refused", error: LAST_RECIPIENT };
+  }
+  return (await deps.applications.claimSend(applicationId)) ? { outcome: "claimed" } : { outcome: "not-in-review" };
+}
+
+/** The Cover Letter for one recipient: {{name}} becomes their first name and {{resume_link}} the Resume's Drive link. */
+function personalize(coverLetter: string, name: string, resumeLink: string) {
+  const firstName = name.trim().split(/\s+/)[0];
+  return coverLetter.replaceAll(NAME_PLACEHOLDER, firstName).replaceAll(RESUME_LINK_PLACEHOLDER, resumeLink);
+}
+
+/**
+ * The send-application Function: emails each recipient not yet sent, a few seconds apart, recording each one
+ * immediately after its email goes out. An error is saved on the Application, which stays locked in sending.
+ */
+export async function runSending(deps: SendDeps, applicationId: number) {
+  if (!deps.allowSend) throw new Error(SEND_NOT_ALLOWED);
+  const application = await deps.applications.get(applicationId);
+  if (!application) throw new Error(`No Application ${applicationId}`);
+  if (application.status !== "sending") {
+    console.log(`Application ${applicationId}: ${application.status}, nothing to send`);
+    return;
+  }
+
+  try {
+    const { subject, coverLetter, resumeLink } = application;
+    if (!subject || !coverLetter || !resumeLink) throw new Error(`Application ${applicationId} isn't ready to send`);
+    const unsent = (await deps.decisionMakers.listForApplication(applicationId)).filter(({ sentAt }) => !sentAt);
+    const gmail = await deps.gmail();
+    for (const [index, recipient] of unsent.entries()) {
+      if (!recipient.email) throw new Error(`${recipient.name} has no email address`);
+      if (index > 0) await deps.sleep(SEND_GAP_MS);
+      await gmail.send({ to: recipient.email, subject, body: personalize(coverLetter, recipient.name, resumeLink) });
+      await deps.decisionMakers.recordSent(applicationId, recipient.id, deps.now());
+      console.log(`Application ${applicationId}: emailed ${describePerson(recipient)}`);
+    }
+    await deps.applications.update(applicationId, { status: "sent", error: null });
+    console.log(`Application ${applicationId}: sent`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await deps.applications.update(applicationId, { error: message });
+    throw error;
   }
 }

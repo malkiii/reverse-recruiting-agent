@@ -22,7 +22,7 @@ export function parseRequestBody(text: string | undefined): unknown {
   }
 }
 
-/** The request body doesn't name what the Function should work on. */
+/** The request is refused: its body doesn't name what the Function should work on, or that work can't start. */
 export class InvalidFunctionRequestError extends Error {}
 
 export type FunctionResponse =

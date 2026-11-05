@@ -8,12 +8,15 @@ import type {
   Application,
   ApplicationChanges,
   ApplicationStore,
+  ReviewChanges,
   Company,
   CompanyPageSearch,
   CompanyStore,
   DriveFile,
   DriveFolder,
   DriveGateway,
+  Email,
+  GmailGateway,
   PdfReader,
   JobPageReader,
   LlmChoice,
@@ -324,6 +327,9 @@ export class FakeGoogleOAuth implements GoogleOAuthGateway {
 export class FakeApplicationStore implements ApplicationStore {
   private applications: Application[] = [];
 
+  /** Shares the Decision Makers' store, which holds each Application's recipients. */
+  constructor(private decisionMakers = new FakeDecisionMakerStore()) {}
+
   async claim(jobId: number, createdAt: Date) {
     if (this.applications.some((application) => application.jobId === jobId)) return null;
     const id = this.applications.length + 1;
@@ -363,6 +369,29 @@ export class FakeApplicationStore implements ApplicationStore {
     const application = this.applications.find((saved) => saved.id === id);
     if (application?.status !== "in-review") return false;
     await this.update(id, { status: "cancelled" });
+    return true;
+  }
+
+  async edit(id: number, changes: ReviewChanges) {
+    const application = this.applications.find((saved) => saved.id === id);
+    if (application?.status !== "in-review") return false;
+    await this.update(id, changes);
+    return true;
+  }
+
+  async removeRecipient(id: number, decisionMakerId: number) {
+    const application = this.applications.find((saved) => saved.id === id);
+    if (application?.status !== "in-review") return false;
+    this.decisionMakers.recipients = this.decisionMakers.recipients.filter(
+      (recipient) => recipient.applicationId !== id || recipient.decisionMakerId !== decisionMakerId,
+    );
+    return true;
+  }
+
+  async claimSend(id: number) {
+    const application = this.applications.find((saved) => saved.id === id);
+    if (application?.status !== "in-review") return false;
+    await this.update(id, { status: "sending" });
     return true;
   }
 
@@ -540,7 +569,7 @@ export class FakeActor<Input, Result> implements ActorGateway<Input, Result> {
 export class FakeDecisionMakerStore implements DecisionMakerStore {
   saved: DecisionMaker[] = [];
   private peopleFoundAtByCompany = new Map<number, Date>();
-  recipients: { applicationId: number; decisionMakerId: number }[] = [];
+  recipients: { applicationId: number; decisionMakerId: number; sentAt: Date | null }[] = [];
 
   async save(companyId: number, people: FoundPerson[], foundAt: Date) {
     const result: DecisionMaker[] = [];
@@ -579,11 +608,37 @@ export class FakeDecisionMakerStore implements DecisionMakerStore {
   }
 
   async addToApplication(applicationId: number, decisionMakerIds: number[]) {
-    this.recipients.push(...decisionMakerIds.map((decisionMakerId) => ({ applicationId, decisionMakerId })));
+    this.recipients.push(
+      ...decisionMakerIds.map((decisionMakerId) => ({ applicationId, decisionMakerId, sentAt: null })),
+    );
   }
 
   async listForApplication(applicationId: number) {
     const ids = this.recipients.filter((recipient) => recipient.applicationId === applicationId);
-    return ids.flatMap(({ decisionMakerId }) => this.saved.filter(({ id }) => id === decisionMakerId));
+    return ids.flatMap(({ decisionMakerId, sentAt }) =>
+      this.saved.filter(({ id }) => id === decisionMakerId).map((saved) => ({ ...saved, sentAt })),
+    );
+  }
+
+  async recordSent(applicationId: number, decisionMakerId: number, sentAt: Date) {
+    this.recipients = this.recipients.map((recipient) =>
+      recipient.applicationId === applicationId && recipient.decisionMakerId === decisionMakerId
+        ? { ...recipient, sentAt }
+        : recipient,
+    );
+    this.saved = this.saved.map((saved) => (saved.id === decisionMakerId ? { ...saved, lastEmailedAt: sentAt } : saved));
+  }
+}
+
+/** Records each email sent, and fails from the email numbered `failFrom` on, counting from 1. */
+export class FakeGmail implements GmailGateway {
+  sent: Email[] = [];
+  failFrom = Infinity;
+  onSend: (email: Email) => void = () => {};
+
+  async send(email: Email) {
+    if (this.sent.length + 1 >= this.failFrom) throw new Error("Gmail refused the email");
+    this.sent.push(email);
+    this.onSend(email);
   }
 }

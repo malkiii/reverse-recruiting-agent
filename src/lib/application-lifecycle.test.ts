@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { cancel, prepare, retry, runPreparation } from "./application-lifecycle";
+import { cancel, edit, prepare, removeDecisionMaker, retry, runPreparation, runSending, send } from "./application-lifecycle";
 import {
   FakeActor,
   FakeActorRunStore,
@@ -8,6 +8,7 @@ import {
   FakeCompanyStore,
   FakeDecisionMakerStore,
   FakeDrive,
+  FakeGmail,
   FakeJobPages,
   FakeJobStore,
   FakeLlm,
@@ -58,11 +59,13 @@ async function setup() {
   drive.contents.set("file-Backend Engineer Resume.pdf", "# Jane Doe\nGo engineer, 5 years of payment APIs.");
   drive.files.set("folder", [pdf("Backend Engineer Resume.pdf"), pdf("Data Analyst CV.pdf"), pdf("Notes.pdf")]);
   const llm = new FakeLlm();
+  const decisionMakers = new FakeDecisionMakerStore();
+  const gmail = new FakeGmail();
   const companyPageSearch = new FakeCompanyPageSearch();
   companyPageSearch.results.set(acmeQuery, acmePage);
   return {
     jobs,
-    applications: new FakeApplicationStore(),
+    applications: new FakeApplicationStore(decisionMakers),
     jobPages: new FakeJobPages(),
     companies: new FakeCompanyStore(),
     companyPageSearch,
@@ -70,10 +73,12 @@ async function setup() {
     employeesActor: new FakeActor<EmployeeSearch, Person>("employees"),
     emailsActor: new FakeActor<string[], FoundEmail>("emails"),
     actorRuns: new FakeActorRunStore(),
-    decisionMakers: new FakeDecisionMakerStore(),
+    decisionMakers,
     apifyTokens: "token-a,token-b",
     skippedApifyTokens: new FakeSkippedApifyTokenStore(),
-    sleep: async () => {},
+    sleep: async (_ms: number) => {},
+    gmail: async () => gmail,
+    allowSend: true,
     pdfs: new FakePdfReader(),
     drive: async () => drive,
     llm: async () => llm,
@@ -81,6 +86,7 @@ async function setup() {
     // Handles for the tests.
     fakeDrive: drive,
     fakeLlm: llm,
+    fakeGmail: gmail,
   };
 }
 
@@ -789,4 +795,227 @@ test("only an Application in Review can be cancelled", async () => {
 
   expect(await cancel(deps, id)).toBe(false);
   expect(await deps.applications.get(id)).toMatchObject({ status: "preparing" });
+});
+
+/** Prepares the LinkedIn Job to Review, with Ann and Bob, already saved at Acme, as its Decision Makers. */
+async function reachReview(deps: Deps) {
+  const companyId = await deps.companies.findOrCreate({ name: "Acme", linkedinUrl: acmePage.url });
+  await deps.decisionMakers.save(
+    companyId,
+    ["Ann", "Bob"].map((name) => ({ ...person(name), email: `${name.toLowerCase()}@acme.com`, jobFunction: "12" as const })),
+    new Date("2026-11-01T00:00:00Z"),
+  );
+  deps.fakeLlm.answers.push(answer, letter);
+  const id = (await prepare(deps, 1))!;
+  await runPreparation(deps, id);
+  return id;
+}
+
+const editedLetter = "Hello {{name}},\n\nI ship payment APIs in Go.\n\nResume: {{resume_link}}";
+
+test("in Review, the Admin can edit the subject and Cover Letter", async () => {
+  const deps = await setup();
+  const id = await reachReview(deps);
+
+  const result = await edit(deps, id, { subject: "Go engineer for Acme", coverLetter: editedLetter });
+
+  expect(result).toEqual({ saved: true });
+  expect(await deps.applications.get(id)).toMatchObject({
+    status: "in-review",
+    subject: "Go engineer for Acme",
+    coverLetter: editedLetter,
+  });
+});
+
+test.each([
+  ["{{name}}", "Hello there,\n\nI ship payment APIs in Go.\n\nResume: {{resume_link}}"],
+  ["{{resume_link}}", "Hello {{name}},\n\nI ship payment APIs in Go."],
+])("saving is refused when an edit removes %s, and nothing is saved", async (_, coverLetter) => {
+  const deps = await setup();
+  const id = await reachReview(deps);
+
+  const result = await edit(deps, id, { subject: "Go engineer for Acme", coverLetter });
+
+  expect(result).toEqual({
+    saved: false,
+    error: "The Cover Letter needs {{name}} in its first line and {{resume_link}} at its end",
+  });
+  expect(await deps.applications.get(id)).toMatchObject({ subject: letter.subject, coverLetter: letter.coverLetter });
+});
+
+test("in Review, the Admin can switch to any listed Resume", async () => {
+  const deps = await setup();
+  const id = await reachReview(deps);
+
+  const result = await edit(deps, id, { resumeFileId: "file-Data Analyst CV.pdf" });
+
+  expect(result).toEqual({ saved: true });
+  expect(await deps.applications.get(id)).toMatchObject({
+    resumeFileId: "file-Data Analyst CV.pdf",
+    resumeName: "Data Analyst CV.pdf",
+    resumeLink: "https://drive.google.com/file/Data Analyst CV.pdf",
+    coverLetter: letter.coverLetter,
+  });
+});
+
+test("a file that isn't a listed Resume can't be switched to", async () => {
+  const deps = await setup();
+  const id = await reachReview(deps);
+
+  const result = await edit(deps, id, { resumeFileId: "file-Notes.pdf" });
+
+  expect(result).toEqual({ saved: false, error: "That file isn't one of the Resumes in your Resume Folder" });
+  expect(await deps.applications.get(id)).toMatchObject({ resumeFileId: "file-Backend Engineer Resume.pdf" });
+});
+
+test("in Review, the Admin can remove a Decision Maker, but not the last one", async () => {
+  const deps = await setup();
+  const id = await reachReview(deps);
+  const [ann, bob] = await deps.decisionMakers.listForApplication(id);
+
+  expect(await removeDecisionMaker(deps, id, bob.id)).toEqual({ saved: true });
+  expect(await removeDecisionMaker(deps, id, ann.id)).toEqual({
+    saved: false,
+    error: "An Application needs a Decision Maker: Cancel it instead",
+  });
+
+  expect(names(await deps.decisionMakers.listForApplication(id))).toEqual(["Ann"]);
+  // Removed from this Application only, so they stay saved at the Company.
+  expect(names(await deps.decisionMakers.listForCompany(1))).toEqual(["Ann", "Bob"]);
+});
+
+test("edits are only accepted while the Application is in Review", async () => {
+  const deps = await setup();
+  const preparing = (await prepare(deps, 2))!;
+  const cancelled = await reachReview(deps);
+  const [, bob] = await deps.decisionMakers.listForApplication(cancelled);
+  await cancel(deps, cancelled);
+
+  for (const id of [preparing, cancelled]) {
+    expect(await edit(deps, id, { subject: "Changed" })).toEqual({
+      saved: false,
+      error: "Only an Application in Review can be edited",
+    });
+  }
+  expect(await removeDecisionMaker(deps, cancelled, bob.id)).toMatchObject({ saved: false });
+
+  expect(await deps.applications.get(cancelled)).toMatchObject({ status: "cancelled", subject: letter.subject });
+  expect(await deps.applications.get(preparing)).toMatchObject({ subject: null });
+  expect(names(await deps.decisionMakers.listForApplication(cancelled))).toEqual(["Ann", "Bob"]);
+});
+
+test("an empty subject can't be saved", async () => {
+  const deps = await setup();
+  const id = await reachReview(deps);
+
+  expect(await edit(deps, id, { subject: "  " })).toEqual({ saved: false, error: "The subject can't be empty" });
+  expect(await deps.applications.get(id)).toMatchObject({ subject: letter.subject });
+});
+
+const sendTime = new Date("2026-11-05T09:00:00Z");
+
+test("Send emails each Decision Maker from the Admin's Gmail, a few seconds apart, personalized with their name and the Resume link", async () => {
+  const deps = await setup();
+  const id = await reachReview(deps);
+  const events: string[] = [];
+  deps.fakeGmail.onSend = (email) => events.push(`email ${email.to}`);
+  deps.sleep = async (ms) => void events.push(`sleep ${ms}`);
+  deps.now = () => sendTime;
+
+  expect(await send(deps, id)).toEqual({ outcome: "claimed" });
+  expect(deps.fakeGmail.sent).toEqual([]);
+  await runSending(deps, id);
+
+  expect(events).toEqual(["email ann@acme.com", "sleep 5000", "email bob@acme.com"]);
+  expect(deps.fakeGmail.sent[0]).toEqual({
+    to: "ann@acme.com",
+    subject: letter.subject,
+    body: "Hi Ann,\n\nI build payment APIs in Go.\n\nMy Resume: https://drive.google.com/file/Backend Engineer Resume.pdf",
+  });
+  expect(deps.fakeGmail.sent[1].body).toMatch(/^Hi Bob,/);
+  expect(await deps.applications.get(id)).toMatchObject({ status: "sent", error: null });
+  expect(await deps.decisionMakers.listForApplication(id)).toMatchObject([
+    { name: "Ann", sentAt: sendTime, lastEmailedAt: sendTime },
+    { name: "Bob", sentAt: sendTime, lastEmailedAt: sendTime },
+  ]);
+});
+
+test("nothing is emailed without Send, and a double click on Send claims the Application once", async () => {
+  const deps = await setup();
+  const id = await reachReview(deps);
+
+  await runSending(deps, id);
+  expect(deps.fakeGmail.sent).toEqual([]);
+
+  const claims = await Promise.all([send(deps, id), send(deps, id)]);
+
+  expect(claims).toEqual([{ outcome: "claimed" }, { outcome: "not-in-review" }]);
+  expect(await deps.applications.get(id)).toMatchObject({ status: "sending" });
+  await runSending(deps, id);
+  await runSending(deps, id);
+  expect(deps.fakeGmail.sent).toHaveLength(2);
+});
+
+test("Send is refused if a placeholder is missing", async () => {
+  const deps = await setup();
+  const id = await reachReview(deps);
+  // Saved by older code or by hand, since an edit can't remove a placeholder.
+  await deps.applications.update(id, { coverLetter: "Hi there,\n\nI build APIs.\n\n{{resume_link}}" });
+
+  expect(await send(deps, id)).toEqual({
+    outcome: "refused",
+    error: "The Cover Letter needs {{name}} in its first line and {{resume_link}} at its end",
+  });
+  expect(await deps.applications.get(id)).toMatchObject({ status: "in-review" });
+});
+
+test("everything is locked once Send starts", async () => {
+  const deps = await setup();
+  const id = await reachReview(deps);
+  const [, bob] = await deps.decisionMakers.listForApplication(id);
+  await send(deps, id);
+
+  expect(await edit(deps, id, { subject: "Changed", coverLetter: editedLetter })).toMatchObject({ saved: false });
+  expect(await edit(deps, id, { resumeFileId: "file-Data Analyst CV.pdf" })).toMatchObject({ saved: false });
+  expect(await removeDecisionMaker(deps, id, bob.id)).toMatchObject({ saved: false });
+  expect(await cancel(deps, id)).toBe(false);
+  expect(await retry(deps, id)).toBeNull();
+  await runSending(deps, id);
+
+  expect(deps.fakeGmail.sent.map(({ to }) => to)).toEqual(["ann@acme.com", "bob@acme.com"]);
+  expect(deps.fakeGmail.sent[0]).toMatchObject({ subject: letter.subject });
+  expect(await deps.applications.get(id)).toMatchObject({ status: "sent" });
+});
+
+test("Send is refused unless ALLOW_SEND is enabled, and the Function emails nobody without it", async () => {
+  const deps = await setup();
+  const id = await reachReview(deps);
+  deps.allowSend = false;
+
+  expect(await send(deps, id)).toEqual({
+    outcome: "refused",
+    error: "Sending is turned off here: set ALLOW_SEND=true to send",
+  });
+  expect(await deps.applications.get(id)).toMatchObject({ status: "in-review" });
+
+  await deps.applications.claimSend(id);
+  await expect(runSending(deps, id)).rejects.toThrow("ALLOW_SEND");
+  expect(deps.fakeGmail.sent).toEqual([]);
+});
+
+test("each recipient is recorded right after their email goes out, so a failed Send keeps who was emailed and stays locked", async () => {
+  const deps = await setup();
+  const id = await reachReview(deps);
+  deps.now = () => sendTime;
+  deps.fakeGmail.failFrom = 2;
+  await send(deps, id);
+
+  await expect(runSending(deps, id)).rejects.toThrow("Gmail refused the email");
+
+  expect(await deps.decisionMakers.listForApplication(id)).toMatchObject([
+    { name: "Ann", sentAt: sendTime, lastEmailedAt: sendTime },
+    { name: "Bob", sentAt: null, lastEmailedAt: null },
+  ]);
+  expect(await deps.applications.get(id)).toMatchObject({ status: "sending", error: "Gmail refused the email" });
+  expect(await edit(deps, id, { subject: "Changed" })).toMatchObject({ saved: false });
 });
