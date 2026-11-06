@@ -7,6 +7,9 @@ const EXTENSIONS: Record<string, string> = {
   "image/gif": "gif",
 };
 
+export const escapeHtml = (text: string) =>
+  text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+
 const keyboard = ({ label, url }: TelegramLink) => ({ inline_keyboard: [[{ text: label, url }]] });
 
 export function telegramGateway(botToken: string, chatId: string): TelegramGateway {

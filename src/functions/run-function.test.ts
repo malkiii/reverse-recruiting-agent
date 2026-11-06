@@ -38,7 +38,22 @@ test("a Function that throws alerts the Admin with its name and a dashboard link
 
   await runFunction(runId, "noop", async () => { throw new Error("boom"); }, deps);
 
-  expect(deps.telegram.sent).toEqual(["Function noop failed: https://dashboard.example.com/function-runs"]);
+  expect(deps.telegram.messages).toEqual([
+    {
+      text: "🚨 <b>Function failed</b>\n\n⚙️ noop  ·  run #1\n🕒 01 Nov, 12:00 UTC\n\n❌ <code>boom</code>",
+      link: { label: "🔎 View Function Runs", url: "https://dashboard.example.com/function-runs" },
+      html: true,
+    },
+  ]);
+});
+
+test("a failure alert escapes the error and cuts a long one short", async () => {
+  const { runId, ...deps } = await setup();
+
+  await runFunction(runId, "noop", async () => { throw new Error(`<${"x".repeat(2000)}`); }, deps);
+
+  const [{ text }] = deps.telegram.messages;
+  expect(text).toContain(`<code>&lt;${"x".repeat(999)}…</code>`);
 });
 
 test("a finished Function sends no alert", async () => {

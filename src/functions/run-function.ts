@@ -1,4 +1,20 @@
 import type { FunctionRunStore, TelegramGateway } from "../lib/gateways";
+import { escapeHtml } from "../lib/telegram";
+
+// Keeps the alert well under Telegram's 4096-character limit; the full error is on the dashboard.
+const MAX_ALERT_ERROR_LENGTH = 1000;
+
+const utcTime = (date: Date) =>
+  `${date.toLocaleString("en-GB", { day: "2-digit", month: "short", timeZone: "UTC" })}, ${date.toLocaleString("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "UTC" })} UTC`;
+
+const truncate = (text: string) => (text.length > MAX_ALERT_ERROR_LENGTH ? `${text.slice(0, MAX_ALERT_ERROR_LENGTH)}…` : text);
+
+const failureAlert = (functionName: string, runId: number, at: Date, error: string) =>
+  [
+    "🚨 <b>Function failed</b>",
+    `⚙️ ${escapeHtml(functionName)}  ·  run #${runId}\n🕒 ${utcTime(at)}`,
+    `❌ <code>${escapeHtml(truncate(error))}</code>`,
+  ].join("\n\n");
 
 type RunDeps = { runs: FunctionRunStore; telegram: TelegramGateway; dashboardUrl: string; now: () => Date };
 
@@ -19,7 +35,9 @@ export async function runFunction(runId: number, functionName: string, work: () 
     } finally {
       const link = new URL("/function-runs", dashboardUrl);
       // A Telegram outage only costs the alert, and must not replace the failure itself.
-      await telegram.send(`Function ${functionName} failed: ${link}`).catch(console.error);
+      await telegram
+        .sendHtml(failureAlert(functionName, runId, now(), message), { label: "🔎 View Function Runs", url: link.toString() })
+        .catch(console.error);
     }
   }
 }

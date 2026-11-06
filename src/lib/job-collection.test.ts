@@ -641,7 +641,7 @@ test("when all Apify tokens are used up, the Job Collection fails and the Admin 
   await expect(runCollection(deps)).rejects.toThrow(/All Apify tokens are used up/);
 
   expect(deps.telegram.sent).toEqual([
-    "All Apify tokens are used up until the next UTC day. Top up a token to collect from Job Boards.",
+    "🪫 <b>Apify tokens used up</b>\n\nAll tokens are out of credit until the next UTC day.\nJob Feeds still run; Job Board searches are skipped.",
     "💼 <b>Platform Engineer</b>\n\n🏢 Initech\n\n📍 Remote\n\n<i>(Feed: jobs.example.com)</i>",
   ]);
 });
