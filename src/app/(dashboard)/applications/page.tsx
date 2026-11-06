@@ -1,3 +1,4 @@
+import { AutoRefresh } from "@/components/auto-refresh";
 import Link from "next/link";
 import { connection } from "next/server";
 import { FILTER_LABELS, STEP_NAMES } from "@/components/status";
@@ -17,7 +18,7 @@ export default async function ApplicationsPage({ searchParams }: { searchParams:
 
   return (
     <>
-      {working && <meta httpEquiv="refresh" content="5" />}
+      {working && <AutoRefresh seconds={5} />}
       <PageHeader title="Applications" subtitle="Everything you've Prepared, newest first" />
 
       <Segmented

@@ -1,3 +1,4 @@
+import { AutoRefresh } from "@/components/auto-refresh";
 import { revalidatePath } from "next/cache";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
@@ -279,7 +280,7 @@ export default async function ApplicationPage({
 
   return (
     <div className="space-y-4">
-      {working && <meta httpEquiv="refresh" content="5" />}
+      {working && <AutoRefresh seconds={5} />}
 
       <Link href="/applications" className="inline-flex min-h-9 items-center text-sm text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200">
         ‹ Applications

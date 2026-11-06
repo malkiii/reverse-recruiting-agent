@@ -1,3 +1,4 @@
+import { AutoRefresh } from "@/components/auto-refresh";
 import { revalidatePath } from "next/cache";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -82,7 +83,7 @@ export default async function JobsPage() {
 
   return (
     <>
-      {running && <meta httpEquiv="refresh" content="5" />}
+      {running && <AutoRefresh seconds={5} />}
       <PageHeader
         title="Jobs"
         subtitle={`${jobs.length} most recent`}

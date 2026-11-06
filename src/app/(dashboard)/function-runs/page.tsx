@@ -1,3 +1,4 @@
+import { AutoRefresh } from "@/components/auto-refresh";
 import { revalidatePath } from "next/cache";
 import Link from "next/link";
 import { connection } from "next/server";
@@ -33,7 +34,7 @@ export default async function FunctionRunsPage() {
 
   return (
     <div className="space-y-4">
-      {runs.some(({ status }) => status === "running") && <meta httpEquiv="refresh" content="3" />}
+      {runs.some(({ status }) => status === "running") && <AutoRefresh seconds={3} />}
       <Link
         href="/settings"
         className="inline-flex min-h-9 items-center text-sm text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
