@@ -26,8 +26,8 @@ const functionsSchema = sharedSchema.extend({
   GEMINI_API_KEY: optionalKey,
   OPENAI_API_KEY: optionalKey,
   GROQ_API_KEY: optionalKey,
-  // Off unless set to "true", so Compose and any environment that forgets it can't email Decision Makers.
-  ALLOW_SEND: z
+  // Compose sets it to "true", so testing can't email real Decision Makers whatever the Sending setting says.
+  DISABLE_SEND: z
     .string()
     .optional()
     .transform((value) => value === "true"),

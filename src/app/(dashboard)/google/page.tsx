@@ -65,7 +65,7 @@ async function ResumeFolder({ drive, folder }: { drive: DriveGateway; folder: Dr
               Resume links. Share it in Google Drive.
             </Alert>
           )}
-          <p className="text-sm text-slate-500 dark:text-slate-400">
+          <p className="text-sm text-muted">
             Resumes are PDFs whose names end in &quot;resume&quot; or &quot;CV&quot;, in any case.
           </p>
         </CardBody>
@@ -75,7 +75,7 @@ async function ResumeFolder({ drive, folder }: { drive: DriveGateway; folder: Dr
         <Card>
           <CardHeader title="Other files" />
           <CardBody>
-            <p className="text-sm text-slate-500 dark:text-slate-400">These aren&apos;t Resumes, so they&apos;re never sent.</p>
+            <p className="text-sm text-muted">These aren&apos;t Resumes, so they&apos;re never sent.</p>
           </CardBody>
           <FileList files={others} empty="" />
         </Card>
@@ -86,12 +86,12 @@ async function ResumeFolder({ drive, folder }: { drive: DriveGateway; folder: Dr
 
 function FileList({ files, empty }: { files: DriveFile[]; empty: string }) {
   if (files.length === 0)
-    return empty ? <p className="px-4 pb-4 text-sm text-slate-500 dark:text-slate-400">{empty}</p> : null;
+    return empty ? <p className="px-4 pb-4 text-sm text-muted">{empty}</p> : null;
   return (
-    <ul className="divide-y divide-slate-200 border-t border-slate-200 dark:divide-slate-800 dark:border-slate-800">
+    <ul className="divide-y divide-line border-t border-line">
       {files.map((file) => (
         <li key={file.id}>
-          <a href={file.webViewLink} className="block truncate px-4 py-3 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-800/40">
+          <a href={file.webViewLink} className="block truncate px-4 py-3 text-sm font-medium hover:bg-subtle">
             {file.name}
           </a>
         </li>
@@ -117,7 +117,7 @@ export default async function GooglePage({ searchParams }: { searchParams: Promi
 
   return (
     <div className="space-y-4">
-      <Link href="/settings" className="inline-flex min-h-9 items-center text-sm text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200">
+      <Link href="/settings" className="inline-flex min-h-9 items-center text-sm text-muted hover:text-fg">
         ‹ Settings
       </Link>
       <PageHeader title="Google" />
@@ -151,7 +151,7 @@ export default async function GooglePage({ searchParams }: { searchParams: Promi
             <Card>
               <CardHeader title="Choose your Resume Folder" />
               <CardBody>
-                <p className="mb-3 text-sm text-slate-500 dark:text-slate-400">
+                <p className="mb-3 text-sm text-muted">
                   Choose the Google Drive folder that holds your Resumes.
                 </p>
                 <FolderChooser folders={await drive.listFolders()} current={folder} />

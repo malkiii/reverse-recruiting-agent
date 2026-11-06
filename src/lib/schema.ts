@@ -118,6 +118,8 @@ export const jobBoardSettings = pgTable("job_board_settings", {
   source: text().primaryKey(),
   enabled: boolean().notNull().default(false),
   searches: jsonb().$type<JobSearch[]>().notNull().default([]),
+  /** Only remote Jobs, for a Job Board whose actor can filter by it. */
+  remoteOnly: boolean("remote_only").notNull().default(false),
 }).enableRLS();
 
 /** A word or phrase that, found in a Job's title, keeps the Job from being saved. */
@@ -169,6 +171,8 @@ export const settings = pgTable(
     llmModel: text("llm_model"),
     /** Whether the daily Modal schedule runs Job Collection. */
     scheduledCollectionEnabled: boolean("scheduled_collection_enabled").notNull().default(false),
+    /** Whether Send may email Decision Makers. Off until the Admin turns it on. */
+    sendingAllowed: boolean("sending_allowed").notNull().default(false),
   },
   singleRow,
 ).enableRLS();

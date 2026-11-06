@@ -1,10 +1,12 @@
+import { AutoRefresh } from "@/components/auto-refresh";
 import { revalidatePath } from "next/cache";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { connection } from "next/server";
+import { SidePanel, SidePanelToggle } from "@/components/side-panel";
 import { sourceName } from "@/components/status";
 import { SubmitButton } from "@/components/submit-button";
-import { Alert, Card, EmptyState, linkClass, PageHeader, percent, shortDate, StatTile, StatusBadge } from "@/components/ui";
+import { Alert, Card, EmptyState, PageHeader, percent, shortDate, StatTile, StatusBadge } from "@/components/ui";
 import { startFunction } from "@/lib/dashboard-functions";
 import { loadStatsRows } from "@/lib/dashboard-data";
 import { jobsStrip } from "@/lib/dashboard-stats";
@@ -12,6 +14,7 @@ import { drizzleFunctionRunStore, findApplicationIdForJob, listJobsWithApplicati
 import { parseDashboardEnv } from "@/lib/env";
 import { isCollectionActive } from "@/lib/job-collection";
 import { COLLECT_JOBS, PREPARE_APPLICATION } from "@/lib/schema";
+import { CollectionSettings } from "./collection-settings";
 
 async function startCollection() {
   "use server";
@@ -42,7 +45,7 @@ function ApplicationCell({ job, block }: { job: JobRow; block?: boolean }) {
     return (
       <Link href={`/applications/${job.applicationId}`} className="inline-flex items-center gap-1 py-1">
         <StatusBadge status={job.applicationStatus} />
-        <span aria-hidden="true" className="text-slate-400">
+        <span aria-hidden="true" className="text-faint">
           ›
         </span>
       </Link>
@@ -51,7 +54,7 @@ function ApplicationCell({ job, block }: { job: JobRow; block?: boolean }) {
   return (
     <form action={prepareJob}>
       <input type="hidden" name="jobId" value={job.id} />
-      <SubmitButton pendingText="Preparing…" block={block}>
+      <SubmitButton variant="secondary" pendingText="Preparing…" block={block}>
         Prepare
       </SubmitButton>
     </form>
@@ -82,18 +85,24 @@ export default async function JobsPage() {
 
   return (
     <>
-      {running && <meta httpEquiv="refresh" content="5" />}
+      {running && <AutoRefresh seconds={5} />}
       <PageHeader
         title="Jobs"
         subtitle={`${jobs.length} most recent`}
         action={
-          <form action={startCollection}>
-            <SubmitButton variant="secondary" pendingText="Starting…" disabled={running}>
-              {running ? "Collecting…" : "Run Job Collection"}
-            </SubmitButton>
-          </form>
+          <div className="flex items-center gap-2">
+            <form action={startCollection}>
+              <SubmitButton pendingText="Starting…" disabled={running}>
+                {running ? "Collecting…" : "Run Job Collection"}
+              </SubmitButton>
+            </form>
+            <SidePanelToggle label="Collection settings" />
+          </div>
         }
       />
+      <SidePanel title="Collection settings">
+        <CollectionSettings />
+      </SidePanel>
 
       <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
         <StatTile label="New Jobs today" value={strip.newJobsToday} />
@@ -110,11 +119,7 @@ export default async function JobsPage() {
 
       {jobs.length === 0 ? (
         <EmptyState title="No Jobs yet">
-          Run a Job Collection, or turn on a Job Board or Job Feed in{" "}
-          <Link href="/settings" className={linkClass}>
-            Settings
-          </Link>
-          .
+          Run a Job Collection, or turn on a Job Board or Job Feed in Collection settings, the side panel.
         </EmptyState>
       ) : (
         <>
@@ -125,10 +130,10 @@ export default async function JobsPage() {
                   <a href={job.url} className="block text-base leading-snug font-semibold">
                     {job.title}
                   </a>
-                  <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+                  <p className="mt-1 text-sm text-fg-2">
                     <CompanyName job={job} />
                   </p>
-                  <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                  <p className="mt-0.5 text-xs text-muted">
                     {job.location} · {shortDate(job.postDay, TIMEZONE)} · {sourceName(job.source)}
                   </p>
                   <div className="mt-3">
@@ -141,7 +146,7 @@ export default async function JobsPage() {
 
           <Card className="hidden md:block">
             <table className="w-full text-left text-sm">
-              <thead className="border-b border-slate-200 bg-slate-50 text-xs text-slate-500 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-400">
+              <thead className="border-b border-line text-[11px] tracking-wide text-muted uppercase">
                 <tr>
                   <th className="px-4 py-2.5 font-medium">Job</th>
                   <th className="px-4 py-2.5 font-medium">Location</th>
@@ -150,22 +155,22 @@ export default async function JobsPage() {
                   <th className="px-4 py-2.5 text-right font-medium">Application</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+              <tbody className="divide-y divide-line">
                 {jobs.map((job) => (
-                  <tr key={job.url} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                  <tr key={job.url} className="hover:bg-subtle">
                     <td className="max-w-80 px-4 py-3">
                       <a href={job.url} className="font-medium hover:underline">
                         {job.title}
                       </a>
-                      <div className="text-slate-500 dark:text-slate-400">
+                      <div className="text-muted">
                         <CompanyName job={job} />
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{job.location}</td>
-                    <td className="px-4 py-3 whitespace-nowrap text-slate-600 dark:text-slate-300">
+                    <td className="px-4 py-3 text-fg-2">{job.location}</td>
+                    <td className="px-4 py-3 whitespace-nowrap text-fg-2">
                       {shortDate(job.postDay, TIMEZONE)}
                     </td>
-                    <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{sourceName(job.source)}</td>
+                    <td className="px-4 py-3 text-fg-2">{sourceName(job.source)}</td>
                     <td className="px-4 py-3 text-right">
                       <ApplicationCell job={job} />
                     </td>

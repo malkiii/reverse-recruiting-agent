@@ -3,10 +3,8 @@
 import { useState } from "react";
 import { buttonClass } from "@/components/button";
 import { SubmitButton } from "@/components/submit-button";
+import { inputClass } from "@/components/ui";
 import type { DriveFile } from "@/lib/gateways";
-
-const inputClass =
-  "block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-base text-slate-900 shadow-xs outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 sm:text-sm";
 
 /** The Cover Letter, read-only until the Admin taps Edit while it's In Review, which swaps in the form in place. */
 export function CoverLetterCard({
@@ -29,8 +27,8 @@ export function CoverLetterCard({
   const [editing, setEditing] = useState(false);
 
   return (
-    <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xs dark:border-slate-800 dark:bg-slate-900 md:rounded-xl">
-      <div className="flex min-h-12 items-center justify-between gap-3 border-b border-slate-200 px-4 py-2 dark:border-slate-800">
+    <section className="overflow-hidden rounded-md border border-line bg-surface">
+      <div className="flex min-h-12 items-center justify-between gap-3 border-b border-line px-4 py-2">
         <h2 className="text-sm font-semibold">Cover Letter</h2>
         {editable && !editing && (
           <button type="button" onClick={() => setEditing(true)} className={buttonClass("ghost")}>
@@ -67,9 +65,9 @@ export function CoverLetterCard({
               className={`${inputClass} font-mono leading-relaxed`}
             />
           </label>
-          <p className="text-xs text-slate-500 dark:text-slate-400">
-            Keep <code className="rounded bg-slate-100 px-1 dark:bg-slate-800">{"{{name}}"}</code> in the first line and
-            end with <code className="rounded bg-slate-100 px-1 dark:bg-slate-800">{"{{resume_link}}"}</code>.
+          <p className="text-xs text-muted">
+            Keep <code className="rounded bg-subtle px-1">{"{{name}}"}</code> in the first line and
+            end with <code className="rounded bg-subtle px-1">{"{{resume_link}}"}</code>.
           </p>
           <div className="flex gap-2">
             <SubmitButton pendingText="Saving…">Save</SubmitButton>
@@ -80,7 +78,7 @@ export function CoverLetterCard({
         </form>
       ) : (
         <div className="px-4 py-4">
-          <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Subject</p>
+          <p className="text-xs font-medium text-muted">Subject</p>
           <p className="mb-4 font-medium">{subject}</p>
           <div className="text-sm leading-relaxed whitespace-pre-wrap">{coverLetter}</div>
         </div>

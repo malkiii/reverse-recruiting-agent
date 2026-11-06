@@ -3,16 +3,17 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
+import { ThemeToggle } from "./theme-toggle";
 
 const icon = (path: ReactNode) => (
   <svg
     viewBox="0 0 24 24"
     fill="none"
     stroke="currentColor"
-    strokeWidth="1.8"
+    strokeWidth="1.6"
     strokeLinecap="round"
     strokeLinejoin="round"
-    className="size-6 md:size-5"
+    className="size-6 md:size-4"
     aria-hidden="true"
   >
     {path}
@@ -25,7 +26,7 @@ const TABS = [
     label: "Jobs",
     icon: icon(
       <>
-        <rect x="3" y="7" width="18" height="13" rx="2" />
+        <rect x="3" y="7" width="18" height="13" rx="1" />
         <path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 13h18" />
       </>,
     ),
@@ -36,7 +37,7 @@ const TABS = [
     icon: icon(
       <>
         <path d="M4 6l8 6 8-6" />
-        <rect x="3" y="5" width="18" height="14" rx="2" />
+        <rect x="3" y="5" width="18" height="14" rx="1" />
       </>,
     ),
   },
@@ -67,30 +68,35 @@ function activeTab(pathname: string) {
   return SECTION_OF[section] ?? section;
 }
 
+const HOW_IT_WORKS = "/how-it-works";
+
 /** A left sidebar on desktop and a bottom tab bar on phones. */
-export function Nav() {
+export function Nav({ dark }: { dark: boolean }) {
   const active = activeTab(usePathname());
+  // Phones reach How it works from Settings.
+  const activeOnPhone = active === HOW_IT_WORKS ? "/settings" : active;
 
   return (
     <>
-      <aside className="fixed inset-y-0 left-0 hidden w-60 flex-col border-r border-slate-200 bg-white px-3 py-5 dark:border-slate-800 dark:bg-slate-900 md:flex">
-        <Link href="/jobs" className="mb-6 flex items-center gap-2 px-3">
-          <span className="grid size-7 place-items-center rounded-lg bg-indigo-600 text-sm font-bold text-white">R</span>
-          <span className="text-sm font-semibold">Reverse Recruiting</span>
+      <aside className="fixed inset-y-0 left-0 hidden w-56 flex-col border-r border-line bg-bg px-3 py-4 md:flex">
+        <Link href="/jobs" className="mb-6 flex items-center gap-2.5 px-2">
+          <span className="grid size-6 place-items-center rounded-xs bg-fg font-mono text-xs font-bold text-bg">R</span>
+          <span className="text-[13px] font-semibold tracking-tight">Reverse Recruiting</span>
         </Link>
-        <nav aria-label="Main">
-          <ul className="space-y-1">
+        <nav aria-label="Main" className="flex-1">
+          <ul className="space-y-0.5">
             {TABS.map((tab) => (
               <li key={tab.href}>
                 <Link
                   href={tab.href}
                   aria-current={active === tab.href ? "page" : undefined}
-                  className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition ${
-                    active === tab.href
-                      ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-300"
-                      : "text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+                  className={`relative flex items-center gap-2.5 rounded-sm px-2 py-1.5 text-[13px] font-medium transition ${
+                    active === tab.href ? "bg-subtle text-fg" : "text-muted hover:bg-subtle hover:text-fg"
                   }`}
                 >
+                  {active === tab.href && (
+                    <span aria-hidden="true" className="absolute inset-y-1.5 -left-3 w-0.5 rounded-r-xs bg-accent" />
+                  )}
                   {tab.icon}
                   {tab.label}
                 </Link>
@@ -98,20 +104,39 @@ export function Nav() {
             ))}
           </ul>
         </nav>
+        <Link
+          href={HOW_IT_WORKS}
+          aria-current={active === HOW_IT_WORKS ? "page" : undefined}
+          className={`mb-2 flex items-center gap-2.5 rounded-sm px-2 py-1.5 text-[13px] font-medium transition ${
+            active === HOW_IT_WORKS ? "bg-subtle text-fg" : "text-muted hover:bg-subtle hover:text-fg"
+          }`}
+        >
+          {icon(
+            <>
+              <circle cx="12" cy="12" r="9" />
+              <path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14M12 17.5h0" />
+            </>,
+          )}
+          How it works
+        </Link>
+        <div className="flex items-center justify-between border-t border-line px-2 pt-3 text-xs text-faint">
+          <span>Theme</span>
+          <ThemeToggle initialDark={dark} />
+        </div>
       </aside>
 
       <nav
         aria-label="Main"
-        className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white/90 pb-[env(safe-area-inset-bottom)] backdrop-blur dark:border-slate-800 dark:bg-slate-900/90 md:hidden"
+        className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-bg/90 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden"
       >
         <ul className="grid h-16 grid-cols-4">
           {TABS.map((tab) => (
             <li key={tab.href}>
               <Link
                 href={tab.href}
-                aria-current={active === tab.href ? "page" : undefined}
+                aria-current={activeOnPhone === tab.href ? "page" : undefined}
                 className={`flex h-full flex-col items-center justify-center gap-0.5 text-[11px] font-medium transition active:scale-95 ${
-                  active === tab.href ? "text-indigo-600 dark:text-indigo-400" : "text-slate-500 dark:text-slate-400"
+                  activeOnPhone === tab.href ? "text-fg" : "text-faint"
                 }`}
               >
                 {tab.icon}

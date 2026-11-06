@@ -1,3 +1,4 @@
+import { AutoRefresh } from "@/components/auto-refresh";
 import { revalidatePath } from "next/cache";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
@@ -16,6 +17,7 @@ import {
   drizzleDecisionMakerStore,
   drizzleFunctionRunStore,
   drizzleJobStore,
+  drizzleSendSettingsStore,
   drizzleStepLogStore,
 } from "@/lib/drizzle";
 import { parseDashboardEnv } from "@/lib/env";
@@ -137,17 +139,17 @@ const LOG_STATUS_CLASSES = {
   running: "text-blue-600 dark:text-blue-400",
   succeeded: "text-emerald-600 dark:text-emerald-400",
   failed: "text-red-600 dark:text-red-400",
-  stopped: "text-slate-500 dark:text-slate-400",
+  stopped: "text-muted",
 };
 
 /** Each attempt at each step, oldest first, collapsed. A running attempt whose Function was killed shows as failed. */
 function StepLogs({ logs, stalled, timeZone }: { logs: StepLog[]; stalled: boolean; timeZone: string }) {
   return (
-    <details className="group overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xs dark:border-slate-800 dark:bg-slate-900 md:rounded-xl">
+    <details className="group overflow-hidden rounded-md border border-line bg-surface">
       <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between px-4 text-sm font-semibold [&::-webkit-details-marker]:hidden">
-        Step Logs <span className="text-xs font-normal text-slate-500">{logs.length}</span>
+        Step Logs <span className="text-xs font-normal text-muted">{logs.length}</span>
       </summary>
-      <ol className="divide-y divide-slate-200 border-t border-slate-200 dark:divide-slate-800 dark:border-slate-800">
+      <ol className="divide-y divide-line border-t border-line">
         {logs.map((log) => {
           const status = log.status === "running" && stalled ? "failed" : log.status;
           return (
@@ -155,16 +157,16 @@ function StepLogs({ logs, stalled, timeZone }: { logs: StepLog[]; stalled: boole
               <div className="flex items-baseline justify-between gap-3">
                 <span className="font-medium">
                   {STEP_NAMES[log.step]}
-                  {log.attempt > 1 && <span className="text-slate-500"> · attempt {log.attempt}</span>}
+                  {log.attempt > 1 && <span className="text-muted"> · attempt {log.attempt}</span>}
                 </span>
                 <span className={`text-xs font-medium ${LOG_STATUS_CLASSES[status]}`}>{status}</span>
               </div>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
+              <p className="text-xs text-muted">
                 {dateTime(log.startedAt, timeZone)}
                 {log.finishedAt && <> → {dateTime(log.finishedAt, timeZone)}</>}
               </p>
               {(log.error ?? log.result) && (
-                <p className="mt-1 text-xs break-words whitespace-pre-wrap text-slate-600 dark:text-slate-300">
+                <p className="mt-1 text-xs break-words whitespace-pre-wrap text-fg-2">
                   {log.error ?? log.result}
                 </p>
               )}
@@ -181,9 +183,9 @@ function HiddenId({ application }: { application: Application }) {
 }
 
 /** Send and Cancel, fixed above the tab bar on phones so they're always within reach. */
-function ReviewActions({ application }: { application: Application }) {
+function ReviewActions({ application, sendingAllowed }: { application: Application; sendingAllowed: boolean }) {
   return (
-    <div className="fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-20 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur dark:border-slate-800 dark:bg-slate-900/95 md:static md:rounded-xl md:border md:bg-white md:p-4 md:backdrop-blur-none md:dark:bg-slate-900">
+    <div className="fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-20 border-t border-line bg-surface/95 px-4 py-3 backdrop-blur md:static md:rounded-md md:border md:bg-surface md:p-4 md:backdrop-blur-none">
       <div className="flex gap-2">
         <form action={cancelApplication} className="flex-1 md:flex-none">
           <HiddenId application={application} />
@@ -198,12 +200,21 @@ function ReviewActions({ application }: { application: Application }) {
         </form>
         <form action={sendApplication} className="flex-[2] md:flex-none">
           <HiddenId application={application} />
-          <SubmitButton block pendingText="Sending…">
+          <SubmitButton block pendingText="Sending…" disabled={!sendingAllowed}>
             Send
           </SubmitButton>
         </form>
       </div>
-      <p className="mt-2 hidden text-xs text-slate-500 md:block dark:text-slate-400">
+      {!sendingAllowed && (
+        <p className="mt-2 text-xs text-muted">
+          Sending is turned off.{" "}
+          <Link href="/settings" className={linkClass}>
+            Turn it on in Settings
+          </Link>
+          .
+        </p>
+      )}
+      <p className="mt-2 hidden text-xs text-muted md:block">
         Send emails each Decision Maker from your Gmail and locks the Application. Cancel is final: this Job can&apos;t
         be Prepared again.
       </p>
@@ -217,7 +228,7 @@ function Person({ name, profileUrl, headline, children }: { name: string; profil
       <a href={profileUrl} className="font-medium hover:underline">
         {name}
       </a>
-      <p className="truncate text-sm text-slate-500 dark:text-slate-400">{headline}</p>
+      <p className="truncate text-sm text-muted">{headline}</p>
       {children}
     </div>
   );
@@ -239,7 +250,7 @@ export default async function ApplicationPage({
 
   const inReview = saved.status === "in-review";
   const decisionMakerStore = drizzleDecisionMakerStore(DATABASE_URL);
-  const [job, runs, recipients, company, people, resumes, logs] = await Promise.all([
+  const [job, runs, recipients, company, people, resumes, logs, sendingAllowed] = await Promise.all([
     drizzleJobStore(DATABASE_URL).get(saved.jobId),
     drizzleFunctionRunStore(DATABASE_URL).listForApplication(id),
     decisionMakerStore.listForApplication(id),
@@ -247,6 +258,7 @@ export default async function ApplicationPage({
     saved.companyId === null ? [] : decisionMakerStore.listForCompany(saved.companyId),
     inReview ? listResumes(saved) : [],
     drizzleStepLogStore(DATABASE_URL).listForApplication(id),
+    inReview && drizzleSendSettingsStore(DATABASE_URL).sendingAllowed(),
   ]);
   const now = new Date();
   // Shown as failed when its Function passed its time limit, so it can be retried.
@@ -279,9 +291,9 @@ export default async function ApplicationPage({
 
   return (
     <div className="space-y-4">
-      {working && <meta httpEquiv="refresh" content="5" />}
+      {working && <AutoRefresh seconds={5} />}
 
-      <Link href="/applications" className="inline-flex min-h-9 items-center text-sm text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200">
+      <Link href="/applications" className="inline-flex min-h-9 items-center text-sm text-muted hover:text-fg">
         ‹ Applications
       </Link>
 
@@ -289,10 +301,10 @@ export default async function ApplicationPage({
         <div className="flex flex-wrap items-center gap-2">
           <StatusBadge status={application.status} />
           {(application.status === "preparing" || application.status === "sending") && (
-            <span className="text-sm text-slate-500 dark:text-slate-400">{STEP_NAMES[application.currentStep]}…</span>
+            <span className="text-sm text-muted">{STEP_NAMES[application.currentStep]}…</span>
           )}
           {application.status === "failed" && (
-            <span className="text-sm text-slate-500 dark:text-slate-400">at {STEP_NAMES[application.currentStep]}</span>
+            <span className="text-sm text-muted">at {STEP_NAMES[application.currentStep]}</span>
           )}
         </div>
         {job && (
@@ -302,7 +314,7 @@ export default async function ApplicationPage({
                 {job.title}
               </a>
             </h1>
-            <p className="text-sm text-slate-600 dark:text-slate-300">
+            <p className="text-sm text-fg-2">
               {companyName} · {job.location} · {sourceName(job.source)}
             </p>
           </>
@@ -337,15 +349,15 @@ export default async function ApplicationPage({
         </Alert>
       )}
 
-      {inReview && <ReviewActions application={application} />}
+      {inReview && <ReviewActions application={application} sendingAllowed={sendingAllowed} />}
 
       {(companyDetails.length > 0 || application.jobSummary) && (
         <Card>
           <CardHeader title={companyName ?? "Company"} />
           {companyDetails.length > 0 && <DetailList items={companyDetails} />}
           {application.jobSummary && (
-            <div className="border-t border-slate-200 px-4 py-3 dark:border-slate-800">
-              <p className="mb-1 text-xs font-medium text-slate-500 dark:text-slate-400">Job Summary</p>
+            <div className="border-t border-line px-4 py-3">
+              <p className="mb-1 text-xs font-medium text-muted">Job Summary</p>
               <p className="text-sm leading-relaxed">{application.jobSummary}</p>
             </div>
           )}
@@ -354,8 +366,8 @@ export default async function ApplicationPage({
 
       {decisionMakers.length > 0 && (
         <Card>
-          <CardHeader title="Decision Makers" action={<span className="text-xs text-slate-500">{decisionMakers.length}</span>} />
-          <ul className="divide-y divide-slate-200 dark:divide-slate-800">
+          <CardHeader title="Decision Makers" action={<span className="text-xs text-muted">{decisionMakers.length}</span>} />
+          <ul className="divide-y divide-line">
             {decisionMakers.map((decisionMaker) => (
               <li key={decisionMaker.id} className="flex items-start gap-3 px-4 py-3">
                 <Person {...decisionMaker}>
@@ -389,13 +401,13 @@ export default async function ApplicationPage({
         <Card>
           <CardHeader
             title={`Also found at ${companyName ?? "the Company"}`}
-            action={<span className="text-xs text-slate-500">{alsoFound.length}</span>}
+            action={<span className="text-xs text-muted">{alsoFound.length}</span>}
           />
-          <ul className="divide-y divide-slate-200 dark:divide-slate-800">
+          <ul className="divide-y divide-line">
             {alsoFound.map((person) => (
               <li key={person.id} className="flex items-start gap-3 px-4 py-3">
                 <Person {...person}>
-                  {person.email && <p className="truncate text-sm text-slate-600 dark:text-slate-300">{person.email}</p>}
+                  {person.email && <p className="truncate text-sm text-fg-2">{person.email}</p>}
                 </Person>
                 <div className="shrink-0 pt-0.5">{REASON_TAGS[person.reason]}</div>
               </li>

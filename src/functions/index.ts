@@ -9,6 +9,7 @@ import {
   drizzleLlmSettingsStore,
   drizzleResumeFolderStore,
   drizzleScheduleSettingsStore,
+  drizzleSendSettingsStore,
   drizzleExcludedKeywordStore,
   drizzleFunctionRunStore,
   drizzleGoogleConnectionStore,
@@ -110,7 +111,7 @@ export function functionServices() {
     GEMINI_API_KEY,
     OPENAI_API_KEY,
     GROQ_API_KEY,
-    ALLOW_SEND,
+    DISABLE_SEND,
   } = parseFunctionsEnv(process.env);
   const now = () => new Date();
   const googleConnection = {
@@ -154,6 +155,6 @@ export function functionServices() {
     llm: async () => llmGateway(await llmSettings.get(), llmApiKeys),
     pdfs: pdfReader,
     gmail: async () => googleGmail(await accessToken()),
-    allowSend: ALLOW_SEND,
+    sendingAllowed: async () => !DISABLE_SEND && (await drizzleSendSettingsStore(DATABASE_URL).sendingAllowed()),
   };
 }

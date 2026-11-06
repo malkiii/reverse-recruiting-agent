@@ -29,13 +29,10 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
     <main className="grid min-h-dvh place-items-center px-4">
       <div className="w-full max-w-sm">
         <div className="mb-6 flex flex-col items-center gap-3 text-center">
-          <span className="grid size-11 place-items-center rounded-xl bg-indigo-600 text-lg font-bold text-white">R</span>
+          <span className="grid size-11 place-items-center rounded-sm bg-fg font-mono text-lg font-bold text-bg">R</span>
           <h1 className="text-xl font-semibold tracking-tight">Reverse Recruiting</h1>
         </div>
-        <form
-          action={signIn}
-          className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-xs dark:border-slate-800 dark:bg-slate-900"
-        >
+        <form action={signIn} className="space-y-4 rounded-md border border-line bg-surface p-5">
           {error && <Alert>Wrong password.</Alert>}
           <label className="block">
             <span className={labelClass}>Password</span>

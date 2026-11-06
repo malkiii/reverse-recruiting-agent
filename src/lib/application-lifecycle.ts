@@ -528,21 +528,21 @@ export type SendDeps = Pick<ClaimDeps, "applications" | "now"> & {
   /** The Admin's Gmail, reached through the Google connection. */
   gmail: () => Promise<GmailGateway>;
   sleep: (ms: number) => Promise<void>;
-  /** ALLOW_SEND: off in Compose, so testing can't email real Decision Makers. */
-  allowSend: boolean;
+  /** The Sending setting, read at each check. Compose's DISABLE_SEND forces it off. */
+  sendingAllowed: () => Promise<boolean>;
 };
 
 export type SendClaim = { outcome: "claimed" } | { outcome: "not-in-review" } | { outcome: "refused"; error: string };
 export type RetrySendClaim = { outcome: "claimed" } | { outcome: "not-failed" } | { outcome: "refused"; error: string };
 
-const SEND_NOT_ALLOWED = "Sending is turned off here: set ALLOW_SEND=true to send";
+const SEND_NOT_ALLOWED = "Sending is turned off: turn it on in Settings (DISABLE_SEND also keeps it off)";
 
 /**
  * The Admin's Send: checks the Application can be sent, then atomically moves it from Review to sending, which locks it.
  * Nothing is emailed until the send-application Function runs.
  */
-export async function send(deps: Pick<SendDeps, "applications" | "decisionMakers" | "allowSend">, applicationId: number): Promise<SendClaim> {
-  if (!deps.allowSend) return { outcome: "refused", error: SEND_NOT_ALLOWED };
+export async function send(deps: Pick<SendDeps, "applications" | "decisionMakers" | "sendingAllowed">, applicationId: number): Promise<SendClaim> {
+  if (!(await deps.sendingAllowed())) return { outcome: "refused", error: SEND_NOT_ALLOWED };
   const application = await deps.applications.get(applicationId);
   if (application?.status !== "in-review") return { outcome: "not-in-review" };
   if (!application.subject?.trim() || !application.coverLetter || !hasPlaceholders(application.coverLetter)) {
@@ -560,10 +560,10 @@ export async function send(deps: Pick<SendDeps, "applications" | "decisionMakers
  * The send-application Function then emails only the recipients not emailed yet.
  */
 export async function retrySend(
-  deps: RetryDeps & Pick<SendDeps, "allowSend">,
+  deps: RetryDeps & Pick<SendDeps, "sendingAllowed">,
   applicationId: number,
 ): Promise<RetrySendClaim> {
-  if (!deps.allowSend) return { outcome: "refused", error: SEND_NOT_ALLOWED };
+  if (!(await deps.sendingAllowed())) return { outcome: "refused", error: SEND_NOT_ALLOWED };
   await failIfStalled(deps, applicationId);
   return (await deps.applications.retry(applicationId, "send")) ? { outcome: "claimed" } : { outcome: "not-failed" };
 }
@@ -580,7 +580,7 @@ function personalize(coverLetter: string, name: string, resumeLink: string) {
  * is marked failed at the send step, staying locked until retrySend.
  */
 export async function runSending(deps: SendDeps, applicationId: number) {
-  if (!deps.allowSend) throw new Error(SEND_NOT_ALLOWED);
+  if (!(await deps.sendingAllowed())) throw new Error(SEND_NOT_ALLOWED);
   const application = await deps.applications.get(applicationId);
   if (!application) throw new Error(`No Application ${applicationId}`);
   if (application.status !== "sending") {

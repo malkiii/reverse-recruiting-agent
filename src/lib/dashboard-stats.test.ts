@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { groupCounts, jobsStrip, parseRange, parseStatusFilter, stats, type StatsRows } from "./dashboard-stats";
+import { activity, groupCounts, jobsStrip, parseRange, parseStatusFilter, stats, type StatsRows } from "./dashboard-stats";
 
 const now = new Date("2026-11-06T12:00:00Z");
 const hoursAgo = (hours: number) => new Date(now.getTime() - hours * 60 * 60 * 1000);
@@ -135,4 +135,52 @@ test("An unknown status filter or range in the URL falls back to the default", (
   expect(parseStatusFilter(undefined)).toBe("all");
   expect(parseRange("24h")).toBe("24h");
   expect(parseRange("1y")).toBe("30d");
+});
+
+test("Activity counts Jobs, Applications and emails per calendar day in the Admin's timezone, oldest first", () => {
+  const result = activity(
+    rows({
+      jobs: [
+        // 00:30 on 6 November in Algiers (UTC+1): today.
+        { source: "LinkedIn", foundAt: new Date("2026-11-05T23:30:00Z") },
+        { source: "LinkedIn", foundAt: daysAgo(2) },
+        // Before the 7 days.
+        { source: "LinkedIn", foundAt: daysAgo(9) },
+      ],
+      applications: [{ status: "sent", currentStep: "send", createdAt: daysAgo(2) }],
+      sentAt: [hoursAgo(1)],
+    }),
+    "7d",
+    now,
+    "Africa/Algiers",
+  );
+
+  expect(result.map(({ bucket }) => bucket)).toEqual([
+    "2026-10-31",
+    "2026-11-01",
+    "2026-11-02",
+    "2026-11-03",
+    "2026-11-04",
+    "2026-11-05",
+    "2026-11-06",
+  ]);
+  expect(result.at(-1)).toMatchObject({ jobs: 1, applications: 0, emailsSent: 1 });
+  expect(result.at(-3)).toMatchObject({ jobs: 1, applications: 1, emailsSent: 0 });
+  expect(result.reduce((sum, point) => sum + point.jobs, 0)).toBe(2);
+});
+
+test("Activity over 24 hours counts per hour", () => {
+  const result = activity(rows({ jobs: [{ source: "LinkedIn", foundAt: hoursAgo(3) }] }), "24h", now, "UTC");
+
+  expect(result).toHaveLength(24);
+  expect(result[0].bucket).toBe("2026-11-05T13");
+  expect(result.at(-1)?.bucket).toBe("2026-11-06T12");
+  expect(result.find(({ bucket }) => bucket === "2026-11-06T09")?.jobs).toBe(1);
+});
+
+test("Activity since the start begins on the day of the oldest record", () => {
+  const result = activity(rows({ sentAt: [daysAgo(3)] }), "all", now, "UTC");
+
+  expect(result.map(({ bucket }) => bucket)).toEqual(["2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06"]);
+  expect(result[0].emailsSent).toBe(1);
 });

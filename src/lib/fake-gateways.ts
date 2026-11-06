@@ -47,6 +47,7 @@ import type {
   ImageGateway,
   Job,
   JobBoardGateway,
+  JobBoardRunOptions,
   JobBoardSettings,
   JobBoardSettingsStore,
   JobFeed,
@@ -284,7 +285,7 @@ export class FakeJobFeedReader implements JobFeedReader {
 
 /** Each run reports the statuses queued here in turn, stays on the last, and returns the Jobs given. */
 export class FakeJobBoard implements JobBoardGateway {
-  started: { runId: string; search: JobSearch; limit: number; token: string }[] = [];
+  started: { runId: string; search: JobSearch; limit: number; token: string; remoteOnly: boolean }[] = [];
   statuses: ActorRunStatus[] = ["succeeded"];
   private polls = new Map<string, number>();
 
@@ -294,9 +295,9 @@ export class FakeJobBoard implements JobBoardGateway {
     public actor = "worldunboxer/rapid-linkedin-scraper",
   ) {}
 
-  async start(search: JobSearch, limit: number, token: string) {
+  async start(search: JobSearch, limit: number, token: string, { remoteOnly }: JobBoardRunOptions) {
     const runId = `${this.source}-run-${this.started.length + 1}`;
-    this.started.push({ runId, search, limit, token });
+    this.started.push({ runId, search, limit, token, remoteOnly });
     return runId;
   }
 

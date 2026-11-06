@@ -1,3 +1,4 @@
+import { AutoRefresh } from "@/components/auto-refresh";
 import Link from "next/link";
 import { connection } from "next/server";
 import { FILTER_LABELS, STEP_NAMES } from "@/components/status";
@@ -17,7 +18,7 @@ export default async function ApplicationsPage({ searchParams }: { searchParams:
 
   return (
     <>
-      {working && <meta httpEquiv="refresh" content="5" />}
+      {working && <AutoRefresh seconds={5} />}
       <PageHeader title="Applications" subtitle="Everything you've Prepared, newest first" />
 
       <Segmented
@@ -52,27 +53,27 @@ export default async function ApplicationsPage({ searchParams }: { searchParams:
         </EmptyState>
       ) : (
         <Card>
-          <ul className="divide-y divide-slate-200 dark:divide-slate-800">
+          <ul className="divide-y divide-line">
             {shown.map(({ application, jobTitle, companyName }) => (
               <li key={application.id}>
                 <Link
                   href={`/applications/${application.id}`}
-                  className="flex items-center gap-3 px-4 py-3.5 transition hover:bg-slate-50 active:bg-slate-100 dark:hover:bg-slate-800/40 dark:active:bg-slate-800"
+                  className="flex items-center gap-3 px-4 py-3.5 transition hover:bg-subtle active:bg-subtle"
                 >
                   <div className="min-w-0 flex-1">
                     <p className="truncate font-medium">{jobTitle}</p>
-                    <p className="truncate text-sm text-slate-500 dark:text-slate-400">
+                    <p className="truncate text-sm text-muted">
                       {companyName}
                       {statusGroup(application.status) === "working" && <> · {STEP_NAMES[application.currentStep]}…</>}
                     </p>
                   </div>
                   <div className="flex shrink-0 flex-col items-end gap-1">
                     <StatusBadge status={application.status} />
-                    <span className="text-xs text-slate-500 dark:text-slate-400">
+                    <span className="text-xs text-muted">
                       {shortDate(application.createdAt, TIMEZONE)}
                     </span>
                   </div>
-                  <span aria-hidden="true" className="text-slate-400">
+                  <span aria-hidden="true" className="text-faint">
                     ›
                   </span>
                 </Link>

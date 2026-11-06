@@ -83,6 +83,48 @@ export function jobsStrip(rows: StatsRows, now: Date, timeZone: string): JobsStr
   };
 }
 
+export type ActivityPoint = { bucket: string; jobs: number; applications: number; emailsSent: number };
+
+const DAY_MS = 24 * HOUR_MS;
+const RANGE_DAYS: Partial<Record<StatsRange, number>> = { "7d": 7, "30d": 30 };
+
+/** The hour a moment falls in in the timezone, as YYYY-MM-DDTHH. */
+const hourIn = (date: Date, timeZone: string) => `${dayIn(date, timeZone)}T${date.toLocaleString("en-GB", { hour: "2-digit", hourCycle: "h23", timeZone })}`;
+
+/** The calendar day `days` before a YYYY-MM-DD day. */
+const daysBefore = (day: string, days: number) =>
+  new Date(Date.parse(`${day}T00:00:00Z`) - days * DAY_MS).toISOString().slice(0, 10);
+
+/**
+ * Jobs found, Applications started and emails sent over time, oldest first: per hour over 24h, per calendar day in
+ * the Admin's timezone otherwise. All starts on the day of the oldest record.
+ */
+export function activity(rows: StatsRows, range: StatsRange, now: Date, timeZone: string): ActivityPoint[] {
+  const key = range === "24h" ? (date: Date) => hourIn(date, timeZone) : (date: Date) => dayIn(date, timeZone);
+  const dates = [...rows.jobs.map(({ foundAt }) => foundAt), ...rows.applications.map(({ createdAt }) => createdAt), ...rows.sentAt];
+
+  let buckets: string[];
+  if (range === "24h") {
+    buckets = Array.from({ length: 24 }, (_, index) => key(new Date(now.getTime() - (23 - index) * HOUR_MS)));
+  } else {
+    const today = dayIn(now, timeZone);
+    const oldest = dates.length ? dayIn(new Date(Math.min(...dates.map((date) => date.getTime()))), timeZone) : today;
+    const days =
+      RANGE_DAYS[range] ?? Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${oldest}T00:00:00Z`)) / DAY_MS) + 1;
+    buckets = Array.from({ length: days }, (_, index) => daysBefore(today, days - 1 - index));
+  }
+
+  const points = new Map(buckets.map((bucket) => [bucket, { bucket, jobs: 0, applications: 0, emailsSent: 0 }]));
+  const add = (date: Date, field: "jobs" | "applications" | "emailsSent") => {
+    const point = points.get(key(date));
+    if (point) point[field] += 1;
+  };
+  for (const { foundAt } of rows.jobs) add(foundAt, "jobs");
+  for (const { createdAt } of rows.applications) add(createdAt, "applications");
+  for (const sentAt of rows.sentAt) add(sentAt, "emailsSent");
+  return [...points.values()];
+}
+
 export const STATS_RANGES = ["24h", "7d", "30d", "all"] as const satisfies StatsRange[];
 
 /** The range in the URL, 30d when it's missing or unknown. */

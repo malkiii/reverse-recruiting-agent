@@ -20,6 +20,7 @@ import type {
 } from "./gateways";
 import { FEED_SOURCE_PREFIX } from "./firecrawl-job-feed";
 import { COLLECT_JOBS, type JobSearch } from "./schema";
+import { escapeHtml } from "./telegram";
 
 export const COLLECTION_TIME_LIMIT_MS = 30 * 60_000;
 
@@ -115,7 +116,7 @@ async function startActorRuns(deps: CollectionDeps, unfinished: ActorRun[], erro
       }
 
       try {
-        const { token, result: runId } = await router.withToken((token) => jobBoard.start(search, limit, token));
+        const { token, result: runId } = await router.withToken((token) => jobBoard.start(search, limit, token, { remoteOnly: settings.remoteOnly }));
         const run = { runId, actor: jobBoard.actor, token, search, startedAt: deps.now() };
         // Saved before polling, so a Function killed from here on loses nothing.
         await deps.actorRuns.save(run);
@@ -126,9 +127,7 @@ async function startActorRuns(deps: CollectionDeps, unfinished: ActorRun[], erro
           // No other search can start either. Job Feeds and runs already started still go ahead.
           console.error(error.message);
           errors.push(error.message);
-          await deps.telegram
-            .send(`${error.message}. Top up a token to collect from Job Boards.`)
-            .catch(console.error);
+          await deps.telegram.sendHtml(APIFY_TOKENS_USED_UP_ALERT, APIFY_TOP_UP_LINK).catch(console.error);
           return started;
         }
         console.error(`${jobBoard.source} search "${search.keywords}": failed to start:`, error);
@@ -223,7 +222,12 @@ export async function runCollection(deps: CollectionDeps) {
   if (errors.length > 0) throw new Error(errors.join("; "));
 }
 
-const escapeHtml = (text: string) => text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+const APIFY_TOKENS_USED_UP_ALERT = [
+  "🪫 <b>Apify tokens used up</b>",
+  "All tokens are out of credit until the next UTC day.\nJob Feeds still run; Job Board searches are skipped.",
+].join("\n\n");
+
+const APIFY_TOP_UP_LINK = { label: "💳 Top up on Apify", url: "https://console.apify.com/billing" };
 
 const jobAlertCaption = ({ title, companyName, location, source }: PendingAlertJob) =>
   [
