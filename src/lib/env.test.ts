@@ -45,7 +45,7 @@ test("Functions need Telegram settings and the dashboard URL for Failure Alerts"
 });
 
 test("the dashboard needs its password and the Functions base URL", () => {
-  expect(parseDashboardEnv(dashboardVariables)).toEqual(dashboardVariables);
+  expect(parseDashboardEnv(dashboardVariables)).toEqual({ ...dashboardVariables, TIMEZONE: "UTC" });
   expect(() => parseDashboardEnv(sharedVariables)).toThrow(/DASHBOARD_PASSWORD/);
 });
 
@@ -62,5 +62,10 @@ test("variables the other side owns are left out of the parsed result", () => {
     ...functionsVariables,
     ALLOW_SEND: false,
   });
-  expect(parseDashboardEnv({ ...dashboardVariables, APIFY_TOKENS: "first" })).toEqual(dashboardVariables);
+  expect(parseDashboardEnv({ ...dashboardVariables, APIFY_TOKENS: "first" })).toEqual({ ...dashboardVariables, TIMEZONE: "UTC" });
+});
+
+test("the dashboard counts days in the TIMEZONE, UTC when unset", () => {
+  expect(parseDashboardEnv({ ...dashboardVariables, TIMEZONE: "Africa/Algiers" }).TIMEZONE).toBe("Africa/Algiers");
+  expect(parseDashboardEnv({ ...dashboardVariables, TIMEZONE: "" }).TIMEZONE).toBe("UTC");
 });

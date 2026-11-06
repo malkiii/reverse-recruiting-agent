@@ -6,6 +6,7 @@ import {
   getTableColumns,
   gt,
   inArray,
+  isNotNull,
   isNull,
   lte,
   ne,
@@ -82,9 +83,9 @@ function client(databaseUrl: string) {
   return db;
 }
 
-/** A saved Job's columns, without its alert state. */
+/** A saved Job's columns, without its alert state or when it was found. */
 function savedJobColumns() {
-  const { alertState: _alertState, ...columns } = getTableColumns(jobs);
+  const { alertState: _alertState, foundAt: _foundAt, ...columns } = getTableColumns(jobs);
   return columns;
 }
 
@@ -631,6 +632,34 @@ export function listJobsWithApplications(databaseUrl: string) {
     .leftJoin(applications, eq(applications.jobId, jobs.id))
     .orderBy(desc(jobs.id))
     .limit(JOBS_SHOWN);
+}
+
+/** Every Application, newest first, with its Job's title and Company name and its newest Function run. */
+export async function listApplicationsWithJobs(databaseUrl: string) {
+  const db = client(databaseUrl);
+  const rows = await db
+    .select({ application: applications, jobTitle: jobs.title, companyName: jobs.companyName })
+    .from(applications)
+    .innerJoin(jobs, eq(jobs.id, applications.jobId))
+    .orderBy(desc(applications.createdAt), desc(applications.id));
+  const newestRuns = await db
+    .selectDistinctOn([functionRuns.applicationId])
+    .from(functionRuns)
+    .where(isNotNull(functionRuns.applicationId))
+    .orderBy(functionRuns.applicationId, desc(functionRuns.id));
+  const runByApplication = new Map(newestRuns.map((run) => [run.applicationId, run]));
+  return rows.map((row) => ({ ...row, newestRun: runByApplication.get(row.application.id) }));
+}
+
+/** What the dashboard's stats count besides Applications: each Job's source and when it was found, and each email sent. */
+export async function listStatsRows(databaseUrl: string) {
+  const db = client(databaseUrl);
+  const jobRows = await db.select({ source: jobs.source, foundAt: jobs.foundAt }).from(jobs);
+  const sent = await db
+    .select({ sentAt: applicationRecipients.sentAt })
+    .from(applicationRecipients)
+    .where(isNotNull(applicationRecipients.sentAt));
+  return { jobs: jobRows, sentAt: sent.map(({ sentAt }) => sentAt!) };
 }
 
 export async function findApplicationIdForJob(databaseUrl: string, jobId: number) {

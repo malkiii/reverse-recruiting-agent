@@ -8,6 +8,7 @@ import type {
   EmailsActor,
   EmployeesActor,
   FoundPerson,
+  Recipient,
   SkippedApifyTokenStore,
 } from "./gateways";
 import type { JobFunction } from "./schema";
@@ -253,4 +254,19 @@ export async function chooseDecisionMakers(
     );
   }
   return choice;
+}
+
+/** Why a Person found at the Company isn't one of the Application's Decision Makers. */
+export type NotChosenReason = "no-email" | "in-cooldown" | "not-chosen";
+
+/** The Application's Decision Makers, and everyone else found at its Company with why they weren't chosen. */
+export function groupPeople(people: DecisionMaker[], recipients: Recipient[], now: Date) {
+  const recipientIds = new Set(recipients.map(({ id }) => id));
+  const alsoFound = people
+    .filter(({ id }) => !recipientIds.has(id))
+    .map((person) => {
+      const reason: NotChosenReason = !person.email ? "no-email" : inCooldown(person, now) ? "in-cooldown" : "not-chosen";
+      return { ...person, reason };
+    });
+  return { decisionMakers: recipients, alsoFound };
 }

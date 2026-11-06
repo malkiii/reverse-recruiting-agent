@@ -91,6 +91,8 @@ export const jobs = pgTable(
     description: text(),
     companyLinkedinUrl: text("company_linkedin_url"),
     companyLogoUrl: text("company_logo_url"),
+    /** When Job Collection saved it, which the dashboard's stats count by. */
+    foundAt: timestamp("found_at", { withTimezone: true }).notNull().defaultNow(),
     // Jobs that existed at go-live, or that older code saves, are dashboard-only. Job Collection saves new Jobs as pending.
     alertState: text("alert_state", { enum: ["pending", "sent", "dashboard-only"] })
       .notNull()

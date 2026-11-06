@@ -36,6 +36,11 @@ const functionsSchema = sharedSchema.extend({
 const dashboardSchema = sharedSchema.extend({
   DASHBOARD_PASSWORD: z.string().min(1),
   FUNCTIONS_BASE_URL: z.url(),
+  // Where "today" starts on the dashboard, as for the scheduled Job Collection.
+  TIMEZONE: z
+    .string()
+    .optional()
+    .transform((value) => value || "UTC"),
 });
 
 export const parseFunctionsEnv = (variables: Variables) => functionsSchema.parse(variables);
