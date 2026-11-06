@@ -60,6 +60,12 @@ export default async function SettingsPage() {
           <LinkRow href="/jobs" title="Job Collection" description="Schedule, Job Boards, Job Feeds and Excluded Keywords" />
           <LinkRow href="/google" title="Google" description="Gmail connection and Resume Folder" />
           <LinkRow href="/function-runs" title="Function runs" description="Recent runs and their errors" />
+          <LinkRow
+            href="/how-it-works"
+            title="How it works"
+            description="The steps, settings and Collection settings explained"
+            className="md:hidden"
+          />
         </ul>
       </Card>
 
@@ -137,9 +143,19 @@ function Section({ title, description, children }: { title: string; description?
   );
 }
 
-function LinkRow({ href, title, description }: { href: string; title: string; description: string }) {
+function LinkRow({
+  href,
+  title,
+  description,
+  className,
+}: {
+  href: string;
+  title: string;
+  description: string;
+  className?: string;
+}) {
   return (
-    <li>
+    <li className={className}>
       <Link
         href={href}
         className="flex items-center gap-3 px-4 py-3.5 transition hover:bg-subtle active:bg-subtle"

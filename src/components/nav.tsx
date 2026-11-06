@@ -68,9 +68,13 @@ function activeTab(pathname: string) {
   return SECTION_OF[section] ?? section;
 }
 
+const HOW_IT_WORKS = "/how-it-works";
+
 /** A left sidebar on desktop and a bottom tab bar on phones. */
 export function Nav({ dark }: { dark: boolean }) {
   const active = activeTab(usePathname());
+  // Phones reach How it works from Settings.
+  const activeOnPhone = active === HOW_IT_WORKS ? "/settings" : active;
 
   return (
     <>
@@ -100,6 +104,21 @@ export function Nav({ dark }: { dark: boolean }) {
             ))}
           </ul>
         </nav>
+        <Link
+          href={HOW_IT_WORKS}
+          aria-current={active === HOW_IT_WORKS ? "page" : undefined}
+          className={`mb-2 flex items-center gap-2.5 rounded-sm px-2 py-1.5 text-[13px] font-medium transition ${
+            active === HOW_IT_WORKS ? "bg-subtle text-fg" : "text-muted hover:bg-subtle hover:text-fg"
+          }`}
+        >
+          {icon(
+            <>
+              <circle cx="12" cy="12" r="9" />
+              <path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14M12 17.5h0" />
+            </>,
+          )}
+          How it works
+        </Link>
         <div className="flex items-center justify-between border-t border-line px-2 pt-3 text-xs text-faint">
           <span>Theme</span>
           <ThemeToggle initialDark={dark} />
@@ -115,9 +134,9 @@ export function Nav({ dark }: { dark: boolean }) {
             <li key={tab.href}>
               <Link
                 href={tab.href}
-                aria-current={active === tab.href ? "page" : undefined}
+                aria-current={activeOnPhone === tab.href ? "page" : undefined}
                 className={`flex h-full flex-col items-center justify-center gap-0.5 text-[11px] font-medium transition active:scale-95 ${
-                  active === tab.href ? "text-fg" : "text-faint"
+                  activeOnPhone === tab.href ? "text-fg" : "text-faint"
                 }`}
               >
                 {tab.icon}
