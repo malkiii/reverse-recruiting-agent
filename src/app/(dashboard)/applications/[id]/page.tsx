@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { connection } from "next/server";
 import type { ReactNode } from "react";
-import { STEP_NAMES } from "@/components/status";
+import { sourceName, STEP_NAMES } from "@/components/status";
 import { SubmitButton } from "@/components/submit-button";
 import { Alert, Card, CardHeader, DetailList, dateTime, linkClass, StatusBadge, Tag } from "@/components/ui";
 import { applicationAsOf, cancel, edit, type EditResult, removeDecisionMaker } from "@/lib/application-lifecycle";
@@ -266,7 +266,7 @@ export default async function ApplicationPage({
         {company.name}
       </a>,
     ]);
-  if (application.jobLocation) companyDetails.push(["Location", application.jobLocation]);
+  if (application.jobLocation) companyDetails.push(["Job location", application.jobLocation]);
   if (application.industryKeywords && application.industryKeywords.length > 0)
     companyDetails.push(["Industry", application.industryKeywords.join(", ")]);
   if (application.resumeLink)
@@ -303,7 +303,7 @@ export default async function ApplicationPage({
               </a>
             </h1>
             <p className="text-sm text-slate-600 dark:text-slate-300">
-              {companyName} · {job.location} · {job.source}
+              {companyName} · {job.location} · {sourceName(job.source)}
             </p>
           </>
         )}

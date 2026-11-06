@@ -64,7 +64,7 @@ export default async function StatsPage({ searchParams }: { searchParams: Promis
 
       <div className="grid gap-4 md:grid-cols-2">
         <Card>
-          <CardHeader title="Jobs per source" />
+          <CardHeader title="Jobs per Job Board and Job Feed" />
           <CardBody>
             <Bars
               empty="No Jobs found in this range."
@@ -92,8 +92,8 @@ export default async function StatsPage({ searchParams }: { searchParams: Promis
       </div>
 
       <p className="mt-4 text-xs text-slate-500 dark:text-slate-400">
-        Email-Found Rate: of the Applications that got past the search for Decision Makers, the share that reached at
-        least one with an email address.
+        Email-Found Rate: of the Applications that got past the search for Decision Makers, or ended in No Contacts or
+        Direct Apply, the share that reached at least one Decision Maker with an email address.
       </p>
     </>
   );
