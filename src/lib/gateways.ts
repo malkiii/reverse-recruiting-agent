@@ -108,7 +108,7 @@ export interface ImageGateway {
   placeholder(name: PlaceholderName): Promise<Image | null>;
 }
 
-export type Job = Omit<typeof jobs.$inferSelect, "id" | "alertState">;
+export type Job = Omit<typeof jobs.$inferSelect, "id" | "alertState" | "foundAt">;
 export type AlertState = (typeof jobs.$inferSelect)["alertState"];
 export type SavedJob = Job & { id: number };
 export type PendingAlertJob = SavedJob;

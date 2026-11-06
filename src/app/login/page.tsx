@@ -1,5 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { SubmitButton } from "@/components/submit-button";
+import { Alert, inputClass, labelClass } from "@/components/ui";
 import { SESSION_COOKIE, safeEqual, sessionToken } from "@/lib/auth";
 import { parseDashboardEnv } from "@/lib/env";
 
@@ -24,15 +26,26 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
   const { error } = await searchParams;
 
   return (
-    <main>
-      <h1>Sign in</h1>
-      {error && <p role="alert">Wrong password.</p>}
-      <form action={signIn}>
-        <label>
-          Password <input type="password" name="password" required autoFocus />
-        </label>
-        <button type="submit">Sign in</button>
-      </form>
+    <main className="grid min-h-dvh place-items-center px-4">
+      <div className="w-full max-w-sm">
+        <div className="mb-6 flex flex-col items-center gap-3 text-center">
+          <span className="grid size-11 place-items-center rounded-xl bg-indigo-600 text-lg font-bold text-white">R</span>
+          <h1 className="text-xl font-semibold tracking-tight">Reverse Recruiting</h1>
+        </div>
+        <form
+          action={signIn}
+          className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-xs dark:border-slate-800 dark:bg-slate-900"
+        >
+          {error && <Alert>Wrong password.</Alert>}
+          <label className="block">
+            <span className={labelClass}>Password</span>
+            <input type="password" name="password" required autoFocus autoComplete="current-password" className={inputClass} />
+          </label>
+          <SubmitButton block pendingText="Signing in…">
+            Sign in
+          </SubmitButton>
+        </form>
+      </div>
     </main>
   );
 }

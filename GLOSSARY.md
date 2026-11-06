@@ -60,6 +60,10 @@ _Avoid_: Library
 A one-paragraph summary of a Job's description, used to write the cover letter.
 _Avoid_: Digest
 
+**Person**:
+Anyone found at a Company during the search for Decision Makers, with or without an email address.
+_Avoid_: Contact, lead, employee
+
 **Decision Maker**:
 A person at a Company chosen to receive Applications, by job function priority. A Company has at most 4 in any one Application.
 _Avoid_: Contact, lead, recruiter, reach-out person
@@ -99,6 +103,10 @@ _Avoid_: Failed
 **Direct Apply**:
 The outcome of an Application stopped because the Company's LinkedIn page couldn't be confirmed, advising the Admin to apply through the Job link with the chosen Resume.
 _Avoid_: Manual apply, Failed
+
+**Email-Found Rate**:
+Of the Applications that got past the search for Decision Makers, or ended in No Contacts or Direct Apply, the share that reached at least one Decision Maker with an email address.
+_Avoid_: Hit rate, match rate
 
 **Cover Letter**:
 The job-specific email written once per Application, then personalized with each Decision Maker's name and the Resume link.
