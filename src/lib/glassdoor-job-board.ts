@@ -1,7 +1,7 @@
 import { NodeHtmlMarkdown } from "node-html-markdown";
 import { z } from "zod";
 import { actorRunItems, actorRunStatus, startActorRun } from "./apify-actor";
-import type { ActorRun, JobBoardGateway } from "./gateways";
+import type { ActorRun, JobBoardGateway, JobBoardRunOptions } from "./gateways";
 import type { JobSearch } from "./schema";
 
 const ACTOR = "valig/glassdoor-jobs-scraper";
@@ -22,8 +22,8 @@ export const glassdoorJobBoard: JobBoardGateway = {
   source: SOURCE,
   actor: ACTOR,
 
-  start({ keywords, location }: JobSearch, limit: number, token: string) {
-    return startActorRun(ACTOR, { keywords, location, daysOld: DAYS_OLD, limit }, token);
+  start({ keywords, location }: JobSearch, limit: number, token: string, { remoteOnly }: JobBoardRunOptions) {
+    return startActorRun(ACTOR, { keywords, location, daysOld: DAYS_OLD, limit, remoteWorkType: remoteOnly }, token);
   },
 
   status: actorRunStatus,

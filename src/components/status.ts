@@ -23,29 +23,13 @@ export const FILTER_LABELS: Record<StatusFilter, string> = {
   other: "Other",
 };
 
-/** Blue working, amber needs the Admin, green Sent, red Failed, gray everything else. */
-const GROUP_TONES: Record<StatusGroup, { badge: string; bar: string }> = {
-  working: {
-    badge: "bg-blue-50 text-blue-700 ring-blue-600/20 dark:bg-blue-500/10 dark:text-blue-300 dark:ring-blue-400/30",
-    bar: "bg-blue-500",
-  },
-  "in-review": {
-    badge: "bg-amber-50 text-amber-800 ring-amber-600/25 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-400/30",
-    bar: "bg-amber-500",
-  },
-  sent: {
-    badge:
-      "bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-400/30",
-    bar: "bg-emerald-500",
-  },
-  failed: {
-    badge: "bg-red-50 text-red-700 ring-red-600/20 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-400/30",
-    bar: "bg-red-500",
-  },
-  other: {
-    badge: "bg-slate-100 text-slate-600 ring-slate-500/20 dark:bg-slate-500/10 dark:text-slate-300 dark:ring-slate-400/30",
-    bar: "bg-slate-400",
-  },
+/** Blue working, amber needs the Admin, green Sent, red Failed, gray everything else. `chart` colors a status in Stats. */
+const GROUP_TONES: Record<StatusGroup, { badge: string; chart: string }> = {
+  working: { badge: "bg-blue-500/10 text-blue-700 ring-blue-500/25 dark:text-blue-300", chart: "#3b82f6" },
+  "in-review": { badge: "bg-amber-500/10 text-amber-700 ring-amber-500/25 dark:text-amber-300", chart: "#f59e0b" },
+  sent: { badge: "bg-emerald-500/10 text-emerald-700 ring-emerald-500/25 dark:text-emerald-300", chart: "#10b981" },
+  failed: { badge: "bg-red-500/10 text-red-700 ring-red-500/25 dark:text-red-300", chart: "#ef4444" },
+  other: { badge: "bg-subtle text-fg-2 ring-line-strong", chart: "#71717a" },
 };
 
 export const statusTone = (status: ApplicationStatus) => GROUP_TONES[statusGroup(status)];

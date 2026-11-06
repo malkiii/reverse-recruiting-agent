@@ -95,7 +95,7 @@ async function setup() {
     skippedApifyTokens: new FakeSkippedApifyTokenStore(),
     sleep: async (_ms: number) => {},
     gmail: async () => gmail,
-    allowSend: true,
+    sendingAllowed: async () => true,
     pdfs: new FakePdfReader(),
     drive: async () => drive,
     llm: async () => llm,
@@ -1150,19 +1150,19 @@ test("everything is locked once Send starts", async () => {
   expect(await deps.applications.get(id)).toMatchObject({ status: "sent" });
 });
 
-test("Send is refused unless ALLOW_SEND is enabled, and the Function emails nobody without it", async () => {
+test("Send is refused unless Sending is allowed, and the Function emails nobody without it", async () => {
   const deps = await setup();
   const id = await reachReview(deps);
-  deps.allowSend = false;
+  deps.sendingAllowed = async () => false;
 
   expect(await send(deps, id)).toEqual({
     outcome: "refused",
-    error: "Sending is turned off here: set ALLOW_SEND=true to send",
+    error: "Sending is turned off: turn it on in Settings (DISABLE_SEND also keeps it off)",
   });
   expect(await deps.applications.get(id)).toMatchObject({ status: "in-review" });
 
   await deps.applications.claimSend(id);
-  await expect(runSending(deps, id)).rejects.toThrow("ALLOW_SEND");
+  await expect(runSending(deps, id)).rejects.toThrow("Sending is turned off");
   expect(deps.fakeGmail.sent).toEqual([]);
 });
 
@@ -1220,7 +1220,7 @@ test("a Retry of a partly sent Application resumes the Send, emailing only those
   });
 });
 
-test("a failed Prepare can't be retried as a Send, and a Send can't be retried without ALLOW_SEND", async () => {
+test("a failed Prepare can't be retried as a Send, and a Send can't be retried without Sending allowed", async () => {
   const deps = await setup();
   const preparing = (await prepare(deps, 2))!;
   await deps.applications.update(preparing, { status: "failed", error: "Firecrawl was down" });
@@ -1231,10 +1231,10 @@ test("a failed Prepare can't be retried as a Send, and a Send can't be retried w
   deps.fakeGmail.failFrom = 1;
   await send(deps, sending);
   await expect(runSending(deps, sending)).rejects.toThrow("Gmail refused the email");
-  deps.allowSend = false;
+  deps.sendingAllowed = async () => false;
   expect(await retrySend(deps, sending)).toEqual({
     outcome: "refused",
-    error: "Sending is turned off here: set ALLOW_SEND=true to send",
+    error: "Sending is turned off: turn it on in Settings (DISABLE_SEND also keeps it off)",
   });
   expect(await deps.applications.get(sending)).toMatchObject({ status: "failed" });
 });

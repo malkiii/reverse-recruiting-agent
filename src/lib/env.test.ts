@@ -24,13 +24,13 @@ const dashboardVariables = {
 };
 
 test("Functions need only their own variables", () => {
-  expect(parseFunctionsEnv(functionsVariables)).toEqual({ ...functionsVariables, ALLOW_SEND: false });
+  expect(parseFunctionsEnv(functionsVariables)).toEqual({ ...functionsVariables, DISABLE_SEND: false });
 });
 
-test("Send is allowed only when ALLOW_SEND is exactly true", () => {
-  expect(parseFunctionsEnv({ ...functionsVariables, ALLOW_SEND: "true" }).ALLOW_SEND).toBe(true);
+test("Send is disabled only when DISABLE_SEND is exactly true", () => {
+  expect(parseFunctionsEnv({ ...functionsVariables, DISABLE_SEND: "true" }).DISABLE_SEND).toBe(true);
   for (const value of ["", "false", "1", "TRUE"]) {
-    expect(parseFunctionsEnv({ ...functionsVariables, ALLOW_SEND: value }).ALLOW_SEND).toBe(false);
+    expect(parseFunctionsEnv({ ...functionsVariables, DISABLE_SEND: value }).DISABLE_SEND).toBe(false);
   }
 });
 
@@ -60,7 +60,7 @@ test("both sides need the Google OAuth client, because both refresh the Google c
 test("variables the other side owns are left out of the parsed result", () => {
   expect(parseFunctionsEnv({ ...functionsVariables, DASHBOARD_PASSWORD: "password" })).toEqual({
     ...functionsVariables,
-    ALLOW_SEND: false,
+    DISABLE_SEND: false,
   });
   expect(parseDashboardEnv({ ...dashboardVariables, APIFY_TOKENS: "first" })).toEqual({ ...dashboardVariables, TIMEZONE: "UTC" });
 });

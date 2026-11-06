@@ -113,6 +113,20 @@
       "when": 1793981687787,
       "tag": "0015_jobs_found_at",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1793998691990,
+      "tag": "0016_job_board_remote_only",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1793999123251,
+      "tag": "0017_sending_allowed",
+      "breakpoints": true
     }
   ]
 }

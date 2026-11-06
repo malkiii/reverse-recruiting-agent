@@ -1,0 +1,1 @@
+ALTER TABLE "settings" ADD COLUMN "sending_allowed" boolean DEFAULT false NOT NULL;

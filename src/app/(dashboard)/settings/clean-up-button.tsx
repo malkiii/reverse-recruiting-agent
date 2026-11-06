@@ -28,7 +28,7 @@ export function CleanUpButton({ cleanUp }: { cleanUp: () => Promise<CleanUpResul
         {pending ? "Cleaning up…" : "Clean up old data"}
       </button>
       {result && (
-        <p role="status" className="mt-3 text-sm text-slate-600 dark:text-slate-300">
+        <p role="status" className="mt-3 text-sm text-fg-2">
           Deleted {result.jobs} Jobs, {result.applications} Applications, {result.recipients} recipients,{" "}
           {result.functionRuns} Function runs, {result.actorRuns} actor runs and {result.decisionMakers} Decision
           Makers.

@@ -1,0 +1,1 @@
+ALTER TABLE "job_board_settings" ADD COLUMN "remote_only" boolean DEFAULT false NOT NULL;

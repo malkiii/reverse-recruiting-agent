@@ -175,10 +175,12 @@ export interface JobFeedReader {
   read(url: string): Promise<CollectedJob[]>;
 }
 
+export type JobBoardRunOptions = { remoteOnly: boolean };
+
 export interface JobBoardGateway {
   source: string;
   actor: string;
-  start(search: JobSearch, limit: number, token: string): Promise<string>;
+  start(search: JobSearch, limit: number, token: string, options: JobBoardRunOptions): Promise<string>;
   status(run: ActorRun): Promise<ActorRunStatus>;
   results(run: ActorRun): Promise<CollectedJob[]>;
 }
@@ -310,6 +312,12 @@ export interface ScheduleSettingsStore {
   /** Whether the daily Modal schedule runs Job Collection. False until it's turned on. */
   collectionEnabled(): Promise<boolean>;
   saveCollectionEnabled(enabled: boolean): Promise<void>;
+}
+
+export interface SendSettingsStore {
+  /** Whether Send may email Decision Makers. False until it's turned on. */
+  sendingAllowed(): Promise<boolean>;
+  saveSendingAllowed(allowed: boolean): Promise<void>;
 }
 
 export type LlmRequest<T> = { instructions: string; prompt: string; schema: z.ZodType<T> };

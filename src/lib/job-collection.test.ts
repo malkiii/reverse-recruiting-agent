@@ -38,6 +38,7 @@ function setup({
   jobs = [job],
   enabled = true,
   searches = [search],
+  remoteOnly = false,
   apifyTokens = "token",
   excludedKeywords = [] as string[],
 } = {}) {
@@ -48,7 +49,7 @@ function setup({
     delays,
     deps: {
       jobBoards: [board],
-      jobBoardSettings: new FakeJobBoardSettingsStore([{ source: board.source, enabled, searches }]),
+      jobBoardSettings: new FakeJobBoardSettingsStore([{ source: board.source, enabled, searches, remoteOnly }]),
       excludedKeywords: new FakeExcludedKeywordStore(excludedKeywords),
       actorRuns: new FakeActorRunStore(),
       jobs: new FakeJobStore(),
@@ -229,9 +230,9 @@ test("a search that can't start doesn't stop the others", async () => {
   const searches = ["a", "b"].map((keywords) => ({ keywords, location: "Remote" }));
   const { board, deps } = setup({ searches });
   const start = board.start.bind(board);
-  board.start = async (search, limit, token) => {
+  board.start = async (search, limit, token, options) => {
     if (search.keywords === "a") throw new Error("Apify refused");
-    return start(search, limit, token);
+    return start(search, limit, token, options);
   };
 
   await expect(runCollection(deps)).rejects.toThrow(/Apify refused/);
@@ -370,7 +371,7 @@ test("a Glassdoor Job's post day is calculated from its age in days", async () =
   const old = { ...glassdoorJob, url: "https://www.glassdoor.com/job-listing/j?jl=2", ageInDays: 1 };
   const glassdoor = glassdoorBoard([{ ...glassdoorJob, ageInDays: 0 }, old]);
   deps.jobBoards.push(glassdoor);
-  await deps.jobBoardSettings.save({ source: "Glassdoor", enabled: true, searches: [search] });
+  await deps.jobBoardSettings.save({ source: "Glassdoor", enabled: true, searches: [search], remoteOnly: false });
 
   await runCollection(deps);
 
@@ -382,7 +383,7 @@ test("a Job with the same title, Company and post day on another source is a Dup
   const { deps } = setup();
   const sameJob = { ...glassdoorJob, title: "software engineer", companyName: "ACME", ageInDays: 0 };
   deps.jobBoards.push(glassdoorBoard([sameJob, { ...glassdoorJob, ageInDays: 0 }]));
-  await deps.jobBoardSettings.save({ source: "Glassdoor", enabled: true, searches: [search] });
+  await deps.jobBoardSettings.save({ source: "Glassdoor", enabled: true, searches: [search], remoteOnly: false });
 
   await runCollection(deps);
 
@@ -443,7 +444,7 @@ test("a disabled Glassdoor Job Board starts no actor run while LinkedIn still ru
   const { board, deps } = setup();
   const glassdoor = glassdoorBoard([{ ...glassdoorJob, ageInDays: 0 }]);
   deps.jobBoards.push(glassdoor);
-  await deps.jobBoardSettings.save({ source: "Glassdoor", enabled: false, searches: [search] });
+  await deps.jobBoardSettings.save({ source: "Glassdoor", enabled: false, searches: [search], remoteOnly: false });
 
   await runCollection(deps);
 
@@ -452,12 +453,20 @@ test("a disabled Glassdoor Job Board starts no actor run while LinkedIn still ru
   expect(await deps.jobs.list()).toEqual([job]);
 });
 
+test("a Job Board's Remote only setting goes to each of its actor runs", async () => {
+  const { board, deps } = setup({ searches: [search, { keywords: "data engineer", location: "Berlin" }], remoteOnly: true });
+
+  await runCollection(deps);
+
+  expect(board.started.map(({ remoteOnly }) => remoteOnly)).toEqual([true, true]);
+});
+
 test("a failing Glassdoor Job Board doesn't stop LinkedIn or the Job Feeds", async () => {
   const { deps } = setup();
   const glassdoor = glassdoorBoard([{ ...glassdoorJob, ageInDays: 0 }]);
   glassdoor.statuses = ["failed"];
   deps.jobBoards.push(glassdoor);
-  await deps.jobBoardSettings.save({ source: "Glassdoor", enabled: true, searches: [search] });
+  await deps.jobBoardSettings.save({ source: "Glassdoor", enabled: true, searches: [search], remoteOnly: false });
   await deps.jobFeeds.add(feedUrl);
   deps.feedReader.jobs.set(feedUrl, [{ ...feedJob, postDay: "2026-11-01" }]);
 
@@ -548,7 +557,7 @@ test("a Job Feed's Job with no logo shows its page's OG image, then the Job Feed
 test("a Glassdoor Job Alert with no logo shows the Glassdoor placeholder", async () => {
   const { deps } = setup({ jobs: [] });
   deps.jobBoards.push(glassdoorBoard([{ ...glassdoorJob, ageInDays: 0 }]));
-  await deps.jobBoardSettings.save({ source: "Glassdoor", enabled: true, searches: [search] });
+  await deps.jobBoardSettings.save({ source: "Glassdoor", enabled: true, searches: [search], remoteOnly: false });
   deps.images.placeholders.set("glassdoor", image("glassdoor"));
   deps.images.placeholders.set("linkedin", image("linkedin"));
 

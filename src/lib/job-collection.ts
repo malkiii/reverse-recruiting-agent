@@ -115,7 +115,7 @@ async function startActorRuns(deps: CollectionDeps, unfinished: ActorRun[], erro
       }
 
       try {
-        const { token, result: runId } = await router.withToken((token) => jobBoard.start(search, limit, token));
+        const { token, result: runId } = await router.withToken((token) => jobBoard.start(search, limit, token, { remoteOnly: settings.remoteOnly }));
         const run = { runId, actor: jobBoard.actor, token, search, startedAt: deps.now() };
         // Saved before polling, so a Function killed from here on loses nothing.
         await deps.actorRuns.save(run);

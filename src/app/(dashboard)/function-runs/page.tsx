@@ -37,7 +37,7 @@ export default async function FunctionRunsPage() {
       {runs.some(({ status }) => status === "running") && <AutoRefresh seconds={3} />}
       <Link
         href="/settings"
-        className="inline-flex min-h-9 items-center text-sm text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
+        className="inline-flex min-h-9 items-center text-sm text-muted hover:text-fg"
       >
         ‹ Settings
       </Link>
@@ -56,7 +56,7 @@ export default async function FunctionRunsPage() {
         <EmptyState title="No Function runs yet" />
       ) : (
         <Card>
-          <ul className="divide-y divide-slate-200 dark:divide-slate-800">
+          <ul className="divide-y divide-line">
             {runs.map((run) => (
               <li key={run.id} className="px-4 py-3">
                 <div className="flex items-center justify-between gap-3">
@@ -64,14 +64,14 @@ export default async function FunctionRunsPage() {
                     <span className={`size-2 shrink-0 rounded-full ${STATUS_CLASSES[run.status]}`} aria-hidden="true" />
                     <span className="truncate">{run.functionName}</span>
                   </span>
-                  <span className="text-xs text-slate-500 dark:text-slate-400">{run.status}</span>
+                  <span className="text-xs text-muted">{run.status}</span>
                 </div>
-                <p className="text-xs text-slate-500 dark:text-slate-400">
+                <p className="text-xs text-muted">
                   {dateTime(run.startedAt, TIMEZONE)}
                   {run.finishedAt && <> → {dateTime(run.finishedAt, TIMEZONE)}</>}
                 </p>
                 {run.error && (
-                  <p className="mt-1 text-xs break-words text-red-700 dark:text-red-300">{run.error}</p>
+                  <p className="mt-1 text-xs break-words text-red-600 dark:text-red-400">{run.error}</p>
                 )}
               </li>
             ))}

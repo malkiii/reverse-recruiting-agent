@@ -37,6 +37,7 @@ import type {
   LlmChoice,
   LlmSettingsStore,
   ScheduleSettingsStore,
+  SendSettingsStore,
   ActorRunStore,
   ExcludedKeywordStore,
   FunctionRunResult,
@@ -224,7 +225,7 @@ export function drizzleJobBoardSettingsStore(databaseUrl: string): JobBoardSetti
         .values(settings)
         .onConflictDoUpdate({
           target: jobBoardSettings.source,
-          set: { enabled: settings.enabled, searches: settings.searches },
+          set: { enabled: settings.enabled, searches: settings.searches, remoteOnly: settings.remoteOnly },
         });
     },
   };
@@ -392,6 +393,20 @@ export function drizzleScheduleSettingsStore(databaseUrl: string): ScheduleSetti
 
     async saveCollectionEnabled(enabled: boolean) {
       const values = { scheduledCollectionEnabled: enabled };
+      await client(databaseUrl).insert(settings).values(values).onConflictDoUpdate({ target: settings.id, set: values });
+    },
+  };
+}
+
+export function drizzleSendSettingsStore(databaseUrl: string): SendSettingsStore {
+  return {
+    async sendingAllowed() {
+      const [row] = await client(databaseUrl).select({ allowed: settings.sendingAllowed }).from(settings);
+      return row?.allowed ?? false;
+    },
+
+    async saveSendingAllowed(allowed: boolean) {
+      const values = { sendingAllowed: allowed };
       await client(databaseUrl).insert(settings).values(values).onConflictDoUpdate({ target: settings.id, set: values });
     },
   };
