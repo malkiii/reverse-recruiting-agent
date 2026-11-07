@@ -4,13 +4,14 @@ import { connection } from "next/server";
 import type { ReactNode } from "react";
 import { SubmitButton } from "@/components/submit-button";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { Alert, Card, CardHeader, checkboxClass, inputClass, labelClass, PageHeader } from "@/components/ui";
+import { Alert, Card, CardHeader, checkboxClass, PageHeader } from "@/components/ui";
 import { cleanUpOldData, drizzleLlmSettingsStore, drizzleSendSettingsStore } from "@/lib/drizzle";
 import { parseDashboardEnv } from "@/lib/env";
 import { LLM_PROVIDER_NAMES, SUGGESTED_MODELS } from "@/lib/llm";
 import { LLM_PROVIDERS, type LlmProvider } from "@/lib/schema";
 import { isDarkTheme } from "@/lib/theme";
 import { CleanUpButton } from "./clean-up-button";
+import { LlmFields } from "./llm-fields";
 
 function databaseUrl() {
   return parseDashboardEnv(process.env).DATABASE_URL;
@@ -75,31 +76,12 @@ export default async function SettingsPage() {
       >
         {!llm && <Alert tone="warning">No LLM is chosen yet, so Prepare can&apos;t choose a Resume.</Alert>}
         <form action={saveLlm} className="space-y-3">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="block">
-              <span className={labelClass}>Provider</span>
-              <select name="provider" defaultValue={llm?.provider ?? "claude"} required className={inputClass}>
-                {LLM_PROVIDERS.map((provider) => (
-                  <option key={provider} value={provider}>
-                    {LLM_PROVIDER_NAMES[provider]}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="block">
-              <span className={labelClass}>Model</span>
-              <input name="model" list="llm-models" defaultValue={llm?.model} required className={inputClass} />
-            </label>
-          </div>
-          <datalist id="llm-models">
-            {LLM_PROVIDERS.flatMap((provider) =>
-              SUGGESTED_MODELS[provider].map((model) => (
-                <option key={model} value={model}>
-                  {LLM_PROVIDER_NAMES[provider]}
-                </option>
-              )),
-            )}
-          </datalist>
+          <LlmFields
+            providerNames={LLM_PROVIDER_NAMES}
+            suggestedModels={SUGGESTED_MODELS}
+            provider={llm?.provider}
+            model={llm?.model}
+          />
           <SubmitButton variant="secondary" pendingText="Saving…">
             Save
           </SubmitButton>

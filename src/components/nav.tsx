@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
+import { Logo } from "./logo";
 import { ThemeToggle } from "./theme-toggle";
 
 const icon = (path: ReactNode) => (
@@ -80,7 +81,7 @@ export function Nav({ dark }: { dark: boolean }) {
     <>
       <aside className="fixed inset-y-0 left-0 hidden w-56 flex-col border-r border-line bg-bg px-3 py-4 md:flex">
         <Link href="/jobs" className="mb-6 flex items-center gap-2.5 px-2">
-          <span className="grid size-6 place-items-center rounded-xs bg-fg font-mono text-xs font-bold text-bg">R</span>
+          <Logo />
           <span className="text-[13px] font-semibold tracking-tight">Reverse Recruiting</span>
         </Link>
         <nav aria-label="Main" className="flex-1">

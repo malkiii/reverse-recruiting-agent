@@ -4,15 +4,45 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { connection } from "next/server";
 import { SidePanel, SidePanelToggle } from "@/components/side-panel";
-import { sourceName } from "@/components/status";
 import { SubmitButton } from "@/components/submit-button";
-import { Alert, Card, EmptyState, PageHeader, percent, shortDate, StatTile, StatusBadge } from "@/components/ui";
+import { sourceName } from "@/components/status";
+import { FilterInput, FilterSelect } from "@/components/table-filters";
+import {
+  Alert,
+  Card,
+  cx,
+  EmptyState,
+  ExternalLink,
+  linkClass,
+  PageHeader,
+  Pagination,
+  percent,
+  Segmented,
+  shortDate,
+  SourceBadge,
+  StatTile,
+  StatusBadge,
+} from "@/components/ui";
 import { startFunction } from "@/lib/dashboard-functions";
 import { loadStatsRows } from "@/lib/dashboard-data";
 import { jobsStrip } from "@/lib/dashboard-stats";
-import { drizzleFunctionRunStore, findApplicationIdForJob, listJobsWithApplications } from "@/lib/drizzle";
+import {
+  drizzleFunctionRunStore,
+  findApplicationIdForJob,
+  listJobFilterOptions,
+  listJobsWithApplications,
+} from "@/lib/drizzle";
 import { parseDashboardEnv } from "@/lib/env";
 import { isCollectionActive } from "@/lib/job-collection";
+import {
+  type ApplicationFilter,
+  hasJobFilters,
+  type JobFilters,
+  parseJobFilters,
+  parsePage,
+  type SearchParams,
+  withParams,
+} from "@/lib/table-filters";
 import { COLLECT_JOBS, PREPARE_APPLICATION } from "@/lib/schema";
 import { CollectionSettings } from "./collection-settings";
 
@@ -38,12 +68,15 @@ async function prepareJob(formData: FormData) {
   redirect(`/applications/${applicationId}`);
 }
 
-type JobRow = Awaited<ReturnType<typeof listJobsWithApplications>>[number];
+type JobRow = Awaited<ReturnType<typeof listJobsWithApplications>>["rows"][number];
 
 function ApplicationCell({ job, block }: { job: JobRow; block?: boolean }) {
   if (job.applicationId && job.applicationStatus) {
     return (
-      <Link href={`/applications/${job.applicationId}`} className="inline-flex items-center gap-1 py-1">
+      <Link
+        href={`/applications/${job.applicationId}`}
+        className="inline-flex items-center gap-1 py-1 after:absolute after:inset-0"
+      >
         <StatusBadge status={job.applicationStatus} />
         <span aria-hidden="true" className="text-faint">
           ›
@@ -61,25 +94,96 @@ function ApplicationCell({ job, block }: { job: JobRow; block?: boolean }) {
   );
 }
 
+/** A Job with an Application opens it from anywhere on its row or card. */
+const hasApplication = (job: JobRow) => Boolean(job.applicationId && job.applicationStatus);
+
 function CompanyName({ job }: { job: JobRow }) {
   return job.companyLinkedinUrl ? (
-    <a href={job.companyLinkedinUrl} className="hover:underline">
+    <ExternalLink href={job.companyLinkedinUrl} className="relative z-10 hover:underline">
       {job.companyName}
-    </a>
+    </ExternalLink>
   ) : (
     <>{job.companyName}</>
   );
 }
 
-export default async function JobsPage() {
+const APPLICATION_LABELS: Record<ApplicationFilter, string> = {
+  any: "Any",
+  none: "Not prepared",
+  prepared: "Prepared",
+};
+
+/** The Jobs page with these filters, back on page 1. */
+const jobsHref = (filters: JobFilters, page?: number) =>
+  withParams("/jobs", {
+    q: filters.q,
+    source: filters.sources,
+    location: filters.location,
+    application: filters.application === "any" ? undefined : filters.application,
+    company: filters.company,
+    page: page && page > 1 ? String(page) : undefined,
+  });
+
+function JobFilterBar({ filters, sources, companies }: { filters: JobFilters; sources: string[]; companies: string[] }) {
+  const toggleSource = (source: string) =>
+    filters.sources.includes(source)
+      ? filters.sources.filter((chosen) => chosen !== source)
+      : [...filters.sources, source];
+
+  return (
+    <div className="mb-4 space-y-3">
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+        <FilterInput name="q" label="Search Jobs" placeholder="Search title or Company" />
+        <FilterInput name="location" label="Location" placeholder="Location" />
+        <FilterSelect name="company" label="Company" emptyLabel="All Companies" options={companies} />
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        {sources.length > 1 && (
+          <Segmented
+            inline
+            label="Filter by source"
+            options={[
+              { href: jobsHref({ ...filters, sources: [] }), active: filters.sources.length === 0, label: "All sources" },
+              ...sources.map((source) => ({
+                href: jobsHref({ ...filters, sources: toggleSource(source) }),
+                active: filters.sources.includes(source),
+                label: sourceName(source),
+              })),
+            ]}
+          />
+        )}
+        <Segmented
+          inline
+          label="Filter by Application"
+          options={(["any", "none", "prepared"] as const).map((application) => ({
+            href: jobsHref({ ...filters, application }),
+            active: filters.application === application,
+            label: APPLICATION_LABELS[application],
+          }))}
+        />
+        {hasJobFilters(filters) && (
+          <Link href="/jobs" className={cx(linkClass, "text-sm")}>
+            Clear filters
+          </Link>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export default async function JobsPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
   await connection();
+  const params = await searchParams;
+  const filters = parseJobFilters(params);
   const { DATABASE_URL, TIMEZONE } = parseDashboardEnv(process.env);
   const now = new Date();
-  const [jobs, runs, statsRows] = await Promise.all([
-    listJobsWithApplications(DATABASE_URL),
+  const [{ rows: jobs, total, page, pages }, options, runs, statsRows] = await Promise.all([
+    listJobsWithApplications(DATABASE_URL, filters, parsePage(params.page)),
+    listJobFilterOptions(DATABASE_URL),
     drizzleFunctionRunStore(DATABASE_URL).list(),
     loadStatsRows(DATABASE_URL, now),
   ]);
+  const filtered = hasJobFilters(filters);
   const running = isCollectionActive(runs, now);
   const strip = jobsStrip(statsRows, now, TIMEZONE);
 
@@ -88,7 +192,7 @@ export default async function JobsPage() {
       {running && <AutoRefresh seconds={5} />}
       <PageHeader
         title="Jobs"
-        subtitle={`${jobs.length} most recent`}
+        subtitle={filtered ? `${total} matching, newest first` : `${total} Jobs, newest first`}
         action={
           <div className="flex items-center gap-2">
             <form action={startCollection}>
@@ -117,24 +221,36 @@ export default async function JobsPage() {
         </div>
       )}
 
+      {(filtered || jobs.length > 0) && (
+        <JobFilterBar filters={filters} sources={options.sources} companies={options.companies} />
+      )}
+
       {jobs.length === 0 ? (
-        <EmptyState title="No Jobs yet">
-          Run a Job Collection, or turn on a Job Board or Job Feed in Collection settings, the side panel.
-        </EmptyState>
+        filtered ? (
+          <EmptyState title="No matching Jobs">
+            <Link href="/jobs" className={linkClass}>
+              Clear filters
+            </Link>
+          </EmptyState>
+        ) : (
+          <EmptyState title="No Jobs yet">
+            Run a Job Collection, or turn on a Job Board or Job Feed in Collection settings, the side panel.
+          </EmptyState>
+        )
       ) : (
         <>
           <ul className="space-y-3 md:hidden">
             {jobs.map((job) => (
               <li key={job.url}>
-                <Card className="p-4">
-                  <a href={job.url} className="block text-base leading-snug font-semibold">
+                <Card className={cx("p-4", hasApplication(job) && "relative active:bg-subtle")}>
+                  <ExternalLink href={job.url} className="relative z-10 block text-base leading-snug font-semibold">
                     {job.title}
-                  </a>
+                  </ExternalLink>
                   <p className="mt-1 text-sm text-fg-2">
                     <CompanyName job={job} />
                   </p>
-                  <p className="mt-0.5 text-xs text-muted">
-                    {job.location} · {shortDate(job.postDay, TIMEZONE)} · {sourceName(job.source)}
+                  <p className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted">
+                    {job.location} · {shortDate(job.postDay, TIMEZONE)} <SourceBadge source={job.source} />
                   </p>
                   <div className="mt-3">
                     <ApplicationCell job={job} block />
@@ -157,11 +273,14 @@ export default async function JobsPage() {
               </thead>
               <tbody className="divide-y divide-line">
                 {jobs.map((job) => (
-                  <tr key={job.url} className="hover:bg-subtle">
+                  <tr
+                    key={job.url}
+                    className={cx("hover:bg-subtle", hasApplication(job) && "relative cursor-pointer")}
+                  >
                     <td className="max-w-80 px-4 py-3">
-                      <a href={job.url} className="font-medium hover:underline">
+                      <ExternalLink href={job.url} className="relative z-10 font-medium hover:underline">
                         {job.title}
-                      </a>
+                      </ExternalLink>
                       <div className="text-muted">
                         <CompanyName job={job} />
                       </div>
@@ -170,7 +289,9 @@ export default async function JobsPage() {
                     <td className="px-4 py-3 whitespace-nowrap text-fg-2">
                       {shortDate(job.postDay, TIMEZONE)}
                     </td>
-                    <td className="px-4 py-3 text-fg-2">{sourceName(job.source)}</td>
+                    <td className="px-4 py-3">
+                      <SourceBadge source={job.source} />
+                    </td>
                     <td className="px-4 py-3 text-right">
                       <ApplicationCell job={job} />
                     </td>
@@ -179,6 +300,7 @@ export default async function JobsPage() {
               </tbody>
             </table>
           </Card>
+          <Pagination page={page} pages={pages} href={(target) => jobsHref(filters, target)} />
         </>
       )}
     </>
