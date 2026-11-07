@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { Logo } from "@/components/logo";
 import { SubmitButton } from "@/components/submit-button";
 import { Alert, inputClass, labelClass } from "@/components/ui";
 import { SESSION_COOKIE, safeEqual, sessionToken } from "@/lib/auth";
@@ -29,7 +30,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
     <main className="grid min-h-dvh place-items-center px-4">
       <div className="w-full max-w-sm">
         <div className="mb-6 flex flex-col items-center gap-3 text-center">
-          <span className="grid size-11 place-items-center rounded-sm bg-fg font-mono text-lg font-bold text-bg">R</span>
+          <Logo size="lg" />
           <h1 className="text-xl font-semibold tracking-tight">Reverse Recruiting</h1>
         </div>
         <form action={signIn} className="space-y-4 rounded-md border border-line bg-surface p-5">

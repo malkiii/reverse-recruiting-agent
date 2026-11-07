@@ -1,11 +1,20 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import type { ApplicationStatus } from "@/lib/gateways";
-import { STATUS_LABELS, statusTone } from "./status";
+import { sourceName, sourceTone, STATUS_LABELS, statusTone } from "./status";
 
 export const cx = (...classes: (string | false | null | undefined)[]) => classes.filter(Boolean).join(" ");
 
 export const linkClass = "font-medium text-accent underline-offset-4 hover:underline";
+
+/** A link off the dashboard. Opens in a new browser tab. */
+export function ExternalLink({ href, className, children }: { href: string; className?: string; children: ReactNode }) {
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer" className={className}>
+      {children}
+    </a>
+  );
+}
 
 export const inputClass =
   "block w-full rounded-sm border border-line-strong bg-bg px-3 py-2 text-base text-fg outline-none transition placeholder:text-faint hover:border-faint focus:border-accent focus:ring-2 focus:ring-accent-soft sm:text-sm";
@@ -72,6 +81,20 @@ export function StatusBadge({ status }: { status: ApplicationStatus }) {
       )}
     >
       {STATUS_LABELS[status]}
+    </span>
+  );
+}
+
+/** A Job's source as a rounded label. */
+export function SourceBadge({ source }: { source: string }) {
+  return (
+    <span
+      className={cx(
+        "inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset",
+        sourceTone(source),
+      )}
+    >
+      {sourceName(source)}
     </span>
   );
 }
@@ -147,6 +170,39 @@ export function DetailList({ items }: { items: [label: string, value: ReactNode]
         </div>
       ))}
     </dl>
+  );
+}
+
+/** Previous and Next links under a table, with where the page is. Hidden when everything fits on one page. */
+export function Pagination({ page, pages, href }: { page: number; pages: number; href: (page: number) => string }) {
+  if (pages <= 1) return null;
+  const linkClassName =
+    "inline-flex h-8 items-center rounded-sm border border-line bg-surface px-3 text-[13px] font-medium transition hover:border-line-strong hover:bg-subtle";
+  const disabledClassName = "inline-flex h-8 items-center rounded-sm border border-line px-3 text-[13px] font-medium text-faint";
+  return (
+    <nav aria-label="Pagination" className="mt-4 flex items-center justify-between gap-3">
+      {page > 1 ? (
+        <Link href={href(page - 1)} scroll={false} className={linkClassName}>
+          ‹ Previous
+        </Link>
+      ) : (
+        <span aria-disabled="true" className={disabledClassName}>
+          ‹ Previous
+        </span>
+      )}
+      <span className="text-sm text-muted tabular-nums">
+        Page {page} of {pages}
+      </span>
+      {page < pages ? (
+        <Link href={href(page + 1)} scroll={false} className={linkClassName}>
+          Next ›
+        </Link>
+      ) : (
+        <span aria-disabled="true" className={disabledClassName}>
+          Next ›
+        </span>
+      )}
+    </nav>
   );
 }
 

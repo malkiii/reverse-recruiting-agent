@@ -6,7 +6,7 @@ import { connection } from "next/server";
 import type { ReactNode } from "react";
 import { sourceName, STEP_NAMES } from "@/components/status";
 import { SubmitButton } from "@/components/submit-button";
-import { Alert, Card, CardHeader, DetailList, dateTime, linkClass, StatusBadge, Tag } from "@/components/ui";
+import { Alert, Card, CardHeader, DetailList, dateTime, ExternalLink, linkClass, StatusBadge, Tag } from "@/components/ui";
 import { applicationAsOf, cancel, edit, type EditResult, removeDecisionMaker } from "@/lib/application-lifecycle";
 import { startFunction } from "@/lib/dashboard-functions";
 import { dashboardGoogle } from "@/lib/dashboard-google";
@@ -225,9 +225,9 @@ function ReviewActions({ application, sendingAllowed }: { application: Applicati
 function Person({ name, profileUrl, headline, children }: { name: string; profileUrl: string; headline: string; children?: ReactNode }) {
   return (
     <div className="min-w-0 flex-1">
-      <a href={profileUrl} className="font-medium hover:underline">
+      <ExternalLink href={profileUrl} className="font-medium hover:underline">
         {name}
-      </a>
+      </ExternalLink>
       <p className="truncate text-sm text-muted">{headline}</p>
       {children}
     </div>
@@ -274,9 +274,9 @@ export default async function ApplicationPage({
   if (company)
     companyDetails.push([
       "LinkedIn",
-      <a key="linkedin" href={company.linkedinUrl} className={linkClass}>
+      <ExternalLink key="linkedin" href={company.linkedinUrl} className={linkClass}>
         {company.name}
-      </a>,
+      </ExternalLink>,
     ]);
   if (application.jobLocation) companyDetails.push(["Job location", application.jobLocation]);
   if (application.industryKeywords && application.industryKeywords.length > 0)
@@ -284,9 +284,9 @@ export default async function ApplicationPage({
   if (application.resumeLink)
     companyDetails.push([
       "Resume",
-      <a key="resume" href={application.resumeLink} className={linkClass}>
+      <ExternalLink key="resume" href={application.resumeLink} className={linkClass}>
         {application.resumeName}
-      </a>,
+      </ExternalLink>,
     ]);
 
   return (
@@ -310,9 +310,9 @@ export default async function ApplicationPage({
         {job && (
           <>
             <h1 className="text-xl leading-snug font-semibold tracking-tight sm:text-2xl">
-              <a href={job.url} className="hover:underline">
+              <ExternalLink href={job.url} className="hover:underline">
                 {job.title}
-              </a>
+              </ExternalLink>
             </h1>
             <p className="text-sm text-fg-2">
               {companyName} · {job.location} · {sourceName(job.source)}
@@ -333,16 +333,16 @@ export default async function ApplicationPage({
       {application.status === "direct-apply" && job && (
         <Alert tone="warning">
           Apply directly through{" "}
-          <a href={job.url} className="font-semibold underline">
+          <ExternalLink href={job.url} className="font-semibold underline">
             the Job link
-          </a>
+          </ExternalLink>
           {application.resumeLink && (
             <>
               {" "}
               with{" "}
-              <a href={application.resumeLink} className="font-semibold underline">
+              <ExternalLink href={application.resumeLink} className="font-semibold underline">
                 {application.resumeName}
-              </a>
+              </ExternalLink>
             </>
           )}
           .

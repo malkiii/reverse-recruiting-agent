@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { buttonClass } from "@/components/button";
 import { SubmitButton } from "@/components/submit-button";
-import { Alert, Card, CardBody, CardHeader, inputClass, labelClass, PageHeader } from "@/components/ui";
+import { Alert, Card, CardBody, CardHeader, ExternalLink, inputClass, labelClass, PageHeader } from "@/components/ui";
 import { redirect } from "next/navigation";
 import { connection } from "next/server";
 import { dashboardGoogle } from "@/lib/dashboard-google";
@@ -91,9 +91,9 @@ function FileList({ files, empty }: { files: DriveFile[]; empty: string }) {
     <ul className="divide-y divide-line border-t border-line">
       {files.map((file) => (
         <li key={file.id}>
-          <a href={file.webViewLink} className="block truncate px-4 py-3 text-sm font-medium hover:bg-subtle">
+          <ExternalLink href={file.webViewLink} className="block truncate px-4 py-3 text-sm font-medium hover:bg-subtle">
             {file.name}
-          </a>
+          </ExternalLink>
         </li>
       ))}
     </ul>

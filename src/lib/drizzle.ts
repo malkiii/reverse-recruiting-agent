@@ -1,10 +1,12 @@
 import {
   and,
   asc,
+  count,
   desc,
   eq,
   getTableColumns,
   gt,
+  ilike,
   inArray,
   isNotNull,
   isNull,
@@ -71,6 +73,7 @@ import {
   skippedApifyTokens,
   stepLogs,
 } from "./schema";
+import { clampPage, type JobFilters, PAGE_SIZE, pageCount } from "./table-filters";
 
 const RUNS_SHOWN = 20;
 const JOBS_SHOWN = 200;
@@ -638,22 +641,60 @@ export function drizzleDecisionMakerStore(databaseUrl: string): DecisionMakerSto
   };
 }
 
-/** The dashboard's Jobs, each with its Application's ID and status when it has one. */
-export function listJobsWithApplications(databaseUrl: string) {
-  const columns = savedJobColumns();
-  return client(databaseUrl)
-    .select({ ...columns, applicationId: applications.id, applicationStatus: applications.status })
+/** An ILIKE pattern matching text that contains the part. */
+const containing = (part: string) => `%${part.replace(/[\\%_]/g, "\\$&")}%`;
+
+function jobConditions(filters: JobFilters) {
+  return and(
+    filters.q ? or(ilike(jobs.title, containing(filters.q)), ilike(jobs.companyName, containing(filters.q))) : undefined,
+    filters.sources.length ? inArray(jobs.source, filters.sources) : undefined,
+    filters.location ? ilike(jobs.location, containing(filters.location)) : undefined,
+    filters.company ? eq(jobs.companyName, filters.company) : undefined,
+    filters.application === "none" ? isNull(applications.id) : undefined,
+    filters.application === "prepared" ? isNotNull(applications.id) : undefined,
+  );
+}
+
+/**
+ * One page of the dashboard's Jobs that match the filters, newest first, each with its Application's ID and status
+ * when it has one. A page past the last one is the last one.
+ */
+export async function listJobsWithApplications(databaseUrl: string, filters: JobFilters, page: number) {
+  const db = client(databaseUrl);
+  const where = jobConditions(filters);
+  const [{ total }] = await db
+    .select({ total: count() })
     .from(jobs)
     .leftJoin(applications, eq(applications.jobId, jobs.id))
+    .where(where);
+  const shown = clampPage(page, total);
+  const rows = await db
+    .select({ ...savedJobColumns(), applicationId: applications.id, applicationStatus: applications.status })
+    .from(jobs)
+    .leftJoin(applications, eq(applications.jobId, jobs.id))
+    .where(where)
     .orderBy(desc(jobs.id))
-    .limit(JOBS_SHOWN);
+    .limit(PAGE_SIZE)
+    .offset((shown - 1) * PAGE_SIZE);
+  return { rows, total, page: shown, pages: pageCount(total) };
+}
+
+/** The sources and Company names the Jobs filters offer, A to Z. */
+export async function listJobFilterOptions(databaseUrl: string) {
+  const db = client(databaseUrl);
+  const sources = await db.selectDistinct({ source: jobs.source }).from(jobs).orderBy(asc(jobs.source));
+  const companies = await db
+    .selectDistinct({ companyName: jobs.companyName })
+    .from(jobs)
+    .orderBy(asc(jobs.companyName));
+  return { sources: sources.map(({ source }) => source), companies: companies.map(({ companyName }) => companyName) };
 }
 
 /** Every Application, newest first, with its Job's title and Company name and its newest Function run. */
 export async function listApplicationsWithJobs(databaseUrl: string) {
   const db = client(databaseUrl);
   const rows = await db
-    .select({ application: applications, jobTitle: jobs.title, companyName: jobs.companyName })
+    .select({ application: applications, jobTitle: jobs.title, companyName: jobs.companyName, jobLocation: jobs.location })
     .from(applications)
     .innerJoin(jobs, eq(jobs.id, applications.jobId))
     .orderBy(desc(applications.createdAt), desc(applications.id));
